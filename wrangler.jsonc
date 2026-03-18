@@ -5,7 +5,7 @@
   "compatibility_date": "2026-01-19",
   "observability": { "enabled": true },
 
-  // ── KV — same namespace as war room (one namespace, prefixed keys) ──────
+  // ── KV Namespaces ─────────────────────────────────────────────────────
   "kv_namespaces": [
     {
       "binding": "RELAY_STATE",
@@ -19,18 +19,29 @@
     }
   ],
 
-  // ── Rate limiting — Cloudflare native ────────────────────────────────────
-  // Dashboard: Workers & Pages → primecore-relay → Settings → Rate Limiting
-  // Rules are also enforced in code as a second layer.
-  "limits": {
-    "cpu_ms": 50
-  }
+  // ── Durable Objects — TeleprompterSession ────────────────────────────
+  // Each sales session gets its own Durable Object instance.
+  // Key: session ID (rep ID or call ID). Broadcasts payloads to all
+  // connected WebSocket clients in real time globally.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TELEPROMPTER_SESSION",
+        "class_name": "TeleprompterSession"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": ["TeleprompterSession"]
+    }
+  ]
 
-  // ── Secrets (set via Cloudflare dashboard → Worker → Settings) ──────────
-  // RELAY_AUTH_TOKEN   — Bearer token for authenticated relay endpoints
-  // WAR_ROOM_API_TOKEN — Token for forwarding to api.primecoreintelligence.com
-  // CCAAS_WEBHOOK_SECRET_FIVE9    — HMAC secret for Five9 webhook validation
-  // CCAAS_WEBHOOK_SECRET_GENESYS  — HMAC secret for Genesys webhook validation
-  // CCAAS_WEBHOOK_SECRET_3CX      — HMAC secret for 3CX webhook validation
-  // NOTIFY_EMAIL       — Alert destination for critical relay events
+  // ── Secrets ───────────────────────────────────────────────────────────
+  // RELAY_AUTH_TOKEN             — Bearer token for authenticated endpoints
+  // WAR_ROOM_API_TOKEN           — Forward to api.primecoreintelligence.com
+  // CCAAS_WEBHOOK_SECRET_FIVE9   — HMAC secret for Five9 webhooks
+  // CCAAS_WEBHOOK_SECRET_GENESYS — HMAC secret for Genesys webhooks
+  // CCAAS_WEBHOOK_SECRET_BLISS   — HMAC secret for Bliss webhooks
 }

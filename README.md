@@ -1,116 +1,138 @@
-# PrimeCore Intelligence — Workers Relay
+# PrimeCore Intelligence — Workers Relay v2.0
 
-**API relay, rate limiting, CCaaS webhook receiver, and tenant isolation layer.**
+**API relay, rate limiting, CCaaS webhooks, ROI engine, outbound calls, Durable Object WebSocket.**
 
 Live at: `https://api-relay.primecoreintelligence.com`
 
-Sits between the public internet and the War Room API (`api.primecoreintelligence.com`). Every inbound event passes through here first.
-
 ---
 
-## What It Does
+## What's New in v2.0
 
-| Layer | Detail |
+| Feature | Detail |
 |---|---|
-| **Rate limiting** | Per-IP, per-endpoint, per window. Cloudflare KV-backed. Fail-open on KV error. |
-| **Tenant isolation** | Every KV key is `tenant:{id}:{category}:{key}` — zero cross-tenant data access possible |
-| **Webhook validation** | HMAC-SHA256 signature verification for Five9, Genesys, Bliss. Plain-token for 3CX, RingCentral, Atento |
-| **Audit logging** | Every inbound event logged with IP, tenant, timestamp, 90-day retention |
-| **CCaaS normalization** | Normalizes Five9/Genesys/3CX event shapes into a single canonical format |
+| **Durable Object WebSocket** | `TeleprompterSession` — global WebSocket, not localhost. Each session gets its own DO instance. |
+| **ROI Engine** | Live calculation during calls. Matches the marketing ROI calculator exactly. |
+| **Outbound Call Engine** | Queue outbound calls with pre-computed ROI, auto-pushes to teleprompter. |
+| **Teleprompter Push** | Push any payload to connected reps globally in real time. |
 
 ---
 
-## Routes
+## All Endpoints
 
-| Method | Path | Auth | Rate Limit | Description |
-|--------|------|------|------------|-------------|
-| GET | `/relay/health` | — | — | Liveness check |
-| POST | `/relay/call/event` | HMAC or none | 500/5min/tenant | CCaaS call event webhook |
-| POST | `/relay/call/transcript` | — | 2000/5min/tenant | Live transcript chunk |
-| POST | `/relay/call/end` | — | 100/5min/tenant | Call ended, update analytics |
-| GET | `/relay/call/live/:callId` | Bearer | 60/5min default | Poll live call state |
-| POST | `/relay/pilot-request` | — | **3/hour/IP** | Pilot form (strict limit) |
-| GET | `/relay/status/:tenantId` | Bearer | 60/5min default | Tenant KPI metrics |
-| GET | `/relay/audit/:tenantId` | Bearer | 60/5min default | Recent audit log |
-
----
-
-## Tenant Isolation Architecture
-
-All KV keys use the format:
-```
-tenant:{tenantId}:{category}:{key}
-```
-
-Examples:
-```
-tenant:client-abc:call:call_8821ab          ← call state
-tenant:client-abc:metrics:current           ← live KPIs
-tenant:client-abc:audit:2026-03-17T10-00    ← audit log entry
-tenant:public:pilot:pilot_xyz               ← pilot request (no tenant yet)
-```
-
-Client A cannot access Client B's keys — they never share a prefix.
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/relay/health` | — | Liveness |
+| POST | `/relay/call/event` | HMAC/none | CCaaS inbound webhook |
+| POST | `/relay/call/transcript` | — | Live STT chunk |
+| POST | `/relay/call/end` | — | Call ended, update FCR |
+| GET | `/relay/call/live/:callId` | Bearer | Poll live call state |
+| **POST** | **`/relay/call/outbound`** | Bearer | Queue outbound call + pre-compute ROI |
+| **GET** | **`/relay/teleprompter/ws/:sessionId`** | — | WebSocket (Durable Object) |
+| **POST** | **`/relay/teleprompter/push/:sessionId`** | Bearer | Push raw payload to session |
+| **POST** | **`/relay/teleprompter/roi/:sessionId`** | Bearer | Compute ROI + push to session |
+| **POST** | **`/relay/roi`** | — | Compute ROI (no push) |
+| POST | `/relay/pilot-request` | — | Pilot form (3/hr rate limit) |
+| GET | `/relay/status/:tenantId` | Bearer | Tenant KPI metrics |
+| GET | `/relay/audit/:tenantId` | Bearer | Audit log |
 
 ---
 
-## Supported CCaaS Platforms
+## Durable Object WebSocket — TeleprompterSession
 
-| Platform | Signature Header | Verification |
-|---|---|---|
-| Five9 | `x-five9-signature` | HMAC-SHA256 |
-| Genesys | `x-genesys-signature` | HMAC-SHA256 |
-| Bliss | `x-bliss-signature` | HMAC-SHA256 |
-| 3CX | `x-3cx-webhook-token` | Plain token |
-| RingCentral | `x-ringcentral-token` | Plain token |
-| Atento | `x-atento-token` | Plain token |
+Each rep connects to their own session:
+```
+wss://api-relay.primecoreintelligence.com/relay/teleprompter/ws/{sessionId}
+```
+
+Push a payload to all connected reps in that session:
+```
+POST /relay/teleprompter/push/{sessionId}
+Authorization: Bearer {RELAY_AUTH_TOKEN}
+Content-Type: application/json
+{...teleprompter payload...}
+```
+
+Compute ROI + push automatically:
+```
+POST /relay/teleprompter/roi/{sessionId}
+{
+  "industry": "logistics",
+  "volume": 22000,
+  "agents": 12,
+  "agentCost": 1800,
+  "callerLanguage": "es",
+  "stage": 1,
+  "prospect": { "company": "LogiFlow Colombia", "lastStatement": "How much does it cost?" }
+}
+```
+
+---
+
+## Outbound Call Engine
+
+```
+POST /relay/call/outbound
+Authorization: Bearer {RELAY_AUTH_TOKEN}
+{
+  "to": "+573001234567",
+  "callType": "pilot_follow_up",
+  "industry": "logistics",
+  "volume": 22000,
+  "agents": 12,
+  "agentCost": 1800,
+  "language": "es",
+  "company": "LogiFlow Colombia",
+  "contactName": "Carlos Mendez",
+  "sessionId": "rep-alex-vega"
+}
+```
+
+Returns:
+```json
+{
+  "ok": true,
+  "callId": "out_1742317...",
+  "status": "queued",
+  "roi": { "netMonthly": 17200, "breakEvenMonth": 1, ... },
+  "sessionId": "rep-alex-vega"
+}
+```
+
+Pre-computed ROI is automatically pushed to the teleprompter session when the call is queued.
+
+---
+
+## ROI Engine — Industry Benchmarks
+
+| Industry | FCR | AHT | Cost/Call |
+|---|---|---|---|
+| Logistics / 3PL | 89% | 87s | $6.50 |
+| Healthcare | 82% | 120s | $9.20 |
+| Financial Services | 79% | 105s | $8.80 |
+| Retail / E-commerce | 87% | 72s | $5.40 |
+| Fleet / Dispatch | 85% | 95s | $7.10 |
+| BPO Operations | 83% | 102s | $6.90 |
 
 ---
 
 ## Required Cloudflare Setup
 
 ### KV Namespace
-Uses same namespace as War Room: `0b666aeb10344273adefd8ca0b13dd7f`
+`0b666aeb10344273adefd8ca0b13dd7f` — same as War Room
 
-### Secrets (set in Cloudflare dashboard → Workers & Pages → primecore-relay → Settings → Variables)
-```
-RELAY_AUTH_TOKEN                — Bearer token for authenticated endpoints
-WAR_ROOM_API_TOKEN              — Token for forwarding to api.primecoreintelligence.com
-CCAAS_WEBHOOK_SECRET_FIVE9      — HMAC secret from Five9 dashboard
-CCAAS_WEBHOOK_SECRET_GENESYS    — HMAC secret from Genesys dashboard
-CCAAS_WEBHOOK_SECRET_BLISS      — HMAC secret from Bliss dashboard
-```
+### Durable Object
+Deploy via `wrangler deploy` — `TeleprompterSession` class is exported from `src/index.js`
 
-### Rate Limits (configured in code — no dashboard action needed)
+### Secrets
 ```
-/relay/pilot-request    →  3 requests / hour / IP      (strict — prevents lead spam)
-/relay/call/event       →  500 requests / 5min / IP    (high volume for CCaaS)
-/relay/call/transcript  →  2000 requests / 5min / IP   (highest — real-time STT)
-/relay/call/end         →  100 requests / 5min / IP
-default                 →  60 requests / 5min / IP
+RELAY_AUTH_TOKEN             — Bearer token for authenticated endpoints
+WAR_ROOM_API_TOKEN           — Forward to api.primecoreintelligence.com
+NOTIFY_EMAIL                 — Pilot notification email
+CCAAS_WEBHOOK_SECRET_FIVE9   — HMAC secret
+CCAAS_WEBHOOK_SECRET_GENESYS — HMAC secret
+CCAAS_WEBHOOK_SECRET_BLISS   — HMAC secret
 ```
 
 ---
 
-## Call Event Payload (from CCaaS)
-
-```json
-{
-  "callId": "call_abc123",
-  "type": "call.started",
-  "agentId": "agent_456",
-  "callerId": "+15551234567",
-  "direction": "inbound",
-  "language": "es",
-  "platform": "five9"
-}
-```
-
-Send with header: `x-tenant-id: your-client-id`
-
----
-
-## Disclaimer
-
-Not legal, medical, financial, or compliance advice.
 © 2026 PrimeCore Intelligence S.A.
