@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "primecore-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-01-19",
+  "observability": { "enabled": true },
+
+  // ── KV — same namespace as war room (one namespace, prefixed keys) ──────
+  "kv_namespaces": [
+    {
+      "binding": "RELAY_STATE",
+      "id": "0b666aeb10344273adefd8ca0b13dd7f",
+      "preview_id": "0b666aeb10344273adefd8ca0b13dd7f"
+    },
+    {
+      "binding": "RELAY_EVENTS",
+      "id": "0b666aeb10344273adefd8ca0b13dd7f",
+      "preview_id": "0b666aeb10344273adefd8ca0b13dd7f"
+    }
+  ],
+
+  // ── Rate limiting — Cloudflare native ────────────────────────────────────
+  // Dashboard: Workers & Pages → primecore-relay → Settings → Rate Limiting
+  // Rules are also enforced in code as a second layer.
+  "limits": {
+    "cpu_ms": 50
+  }
+
+  // ── Secrets (set via Cloudflare dashboard → Worker → Settings) ──────────
+  // RELAY_AUTH_TOKEN   — Bearer token for authenticated relay endpoints
+  // WAR_ROOM_API_TOKEN — Token for forwarding to api.primecoreintelligence.com
+  // CCAAS_WEBHOOK_SECRET_FIVE9    — HMAC secret for Five9 webhook validation
+  // CCAAS_WEBHOOK_SECRET_GENESYS  — HMAC secret for Genesys webhook validation
+  // CCAAS_WEBHOOK_SECRET_3CX      — HMAC secret for 3CX webhook validation
+  // NOTIFY_EMAIL       — Alert destination for critical relay events
+}
