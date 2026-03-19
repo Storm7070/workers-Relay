@@ -810,12 +810,111 @@ export default {
 
       // Email notification
       if (env.NOTIFY_EMAIL || true) {
-        const emailBody = `New Pilot Request\n\nName: ${record.name}\nEmail: ${record.email}\nCompany: ${record.company}\nCCaaS: ${record.ccaas}\nVolume: ${record.volume}\nVertical: ${record.vertical}\nNotes: ${record.notes}\n\nROI Preview: ${record.roi ? `$${record.roi.netMonthly.toLocaleString()}/mo net` : "pending"}\n\nSubmitted: ${record.ts}\nID: ${id}`;
+        const ccaasSlug = (record.ccaas || "other").toLowerCase().replace(/[^a-z0-9]/g,"");
+        const onboardingUrl = `https://pilot.primecoreintelligence.com/onboarding/?pilot=${id}&platform=${ccaasSlug}&lang=${record.lang || "en"}&client=${encodeURIComponent(record.name)}`;
+        const emailBody = `New Pilot Request
+
+Name:     ${record.name}
+Email:    ${record.email}
+Company:  ${record.company}
+CCaaS:    ${record.ccaas}
+Volume:   ${record.volume}
+Vertical: ${record.vertical}
+Notes:    ${record.notes}
+
+ROI Preview: ${record.roi ? `$${record.roi.netMonthly.toLocaleString()}/mo net` : "pending"}
+
+Submitted: ${record.ts}
+ID:        ${id}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 SEND THIS ONBOARDING LINK TO THE CLIENT:
+
+${onboardingUrl}
+
+This link opens their platform-specific installation guide
+in their language (${record.lang || "en"}) with an AI agent
+that walks them through the entire setup autonomously.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
         ctx.waitUntil(sendEmail(env, {
           to:      env.NOTIFY_EMAIL || "sales@primecoreintelligence.com",
           subject: `🚀 Pilot Request — ${record.company} (${record.vertical})`,
           body:    emailBody,
           replyTo: record.email,
+        }));
+
+        // ── Client confirmation email with onboarding link ────────────────
+        const langLabels = { en: "English", es: "Español", pt: "Português" };
+        const clientLang = record.lang || "en";
+        const greetings = {
+          en: `Hi ${record.name},
+
+Thank you for requesting a PrimeCore Intelligence pilot for ${record.company}.
+
+Your pilot ID is: ${id}
+Your platform: ${record.ccaas}
+
+Your onboarding link is ready. Click it to start the guided installation — our AI agent will walk you through connecting ${record.ccaas} step by step:
+
+${onboardingUrl}
+
+The agent speaks ${langLabels[clientLang] || "English"} and is available 24/7 until you disable it.
+
+If you prefer human support, reply to this email or WhatsApp us directly.
+
+Welcome to PrimeCore Intelligence.
+
+The PrimeCore Team
+onboarding@primecoreintelligence.com`,
+          es: `Hola ${record.name},
+
+Gracias por solicitar un piloto de PrimeCore Intelligence para ${record.company}.
+
+Su ID de piloto es: ${id}
+Su plataforma: ${record.ccaas}
+
+Su enlace de incorporación está listo. Haga clic para iniciar la instalación guiada — nuestro agente de IA le acompañará paso a paso para conectar ${record.ccaas}:
+
+${onboardingUrl}
+
+El agente habla español y está disponible 24/7 hasta que lo deshabilite.
+
+Si prefiere soporte humano, responda este correo o escríbanos por WhatsApp.
+
+Bienvenido a PrimeCore Intelligence.
+
+El Equipo de PrimeCore
+onboarding@primecoreintelligence.com`,
+          pt: `Olá ${record.name},
+
+Obrigado por solicitar um piloto da PrimeCore Intelligence para ${record.company}.
+
+Seu ID de piloto é: ${id}
+Sua plataforma: ${record.ccaas}
+
+Seu link de integração está pronto. Clique para iniciar a instalação guiada — nosso agente de IA irá acompanhá-lo passo a passo para conectar o ${record.ccaas}:
+
+${onboardingUrl}
+
+O agente fala português e está disponível 24/7 até você desativá-lo.
+
+Se preferir suporte humano, responda este email ou nos contate via WhatsApp.
+
+Bem-vindo à PrimeCore Intelligence.
+
+A Equipe PrimeCore
+onboarding@primecoreintelligence.com`,
+        };
+        const subjectLines = {
+          en: `Welcome to PrimeCore Intelligence — Your onboarding link is ready`,
+          es: `Bienvenido a PrimeCore Intelligence — Su enlace de incorporación está listo`,
+          pt: `Bem-vindo à PrimeCore Intelligence — Seu link de integração está pronto`,
+        };
+        ctx.waitUntil(sendEmail(env, {
+          to:      record.email,
+          subject: subjectLines[clientLang] || subjectLines.en,
+          body:    greetings[clientLang] || greetings.en,
+          replyTo: env.NOTIFY_EMAIL || "onboarding@primecoreintelligence.com",
         }));
       }
 
