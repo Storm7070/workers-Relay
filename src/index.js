@@ -94,14 +94,25 @@ function json(obj, status = 200, origin = "") {
 }
 
 function getIP(req)       { return req.headers.get("cf-connecting-ip") || "unknown"; }
-function getTenantId(req) { return (req.headers.get("x-tenant-id") || "").trim() || new URL(req.url).searchParams.get("tenant_id") || "public"; }
+function getTenantId(req) {
+  // Security: strip everything except alphanumeric and hyphen to prevent
+  // colon injection in KV key format (tenant:{id}:{cat}:{key})
+  const raw = (req.headers.get("x-tenant-id") || "").trim()
+    || new URL(req.url).searchParams.get("tenant_id") || "";
+  const clean = raw.replace(/[^a-z0-9\-]/gi, "").slice(0, 40);
+  return clean || "public";
+}
 function sanitize(s, max = 500) { return String(s || "").trim().slice(0, max); }
 function isValidEmail(s)  { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "")); }
 
 // ── Tenant KV keys ────────────────────────────────────────────────────────
 function tenantKey(tenantId, category, key) {
-  const tid = String(tenantId || "public").replace(/[^a-z0-9\-_]/gi, "_").slice(0, 40);
-  return `tenant:${tid}:${category}:${String(key).replace(/[^a-z0-9\-_.]/gi,"_").slice(0,100)}`;
+  // Security: all three segments stripped of KV-unsafe chars
+  // Colons (:) are the separator — must never appear in any segment
+  const tid = String(tenantId || "public").replace(/[^a-z0-9\-]/gi, "").slice(0, 40) || "public";
+  const cat = String(category || "misc").replace(/[^a-z0-9_]/gi, "_");
+  const k   = String(key || "").replace(/[^a-z0-9\-_.]/gi, "_").slice(0, 100);
+  return `tenant:${tid}:${cat}:${k}`;
 }
 
 async function kvGet(kv, tenantId, cat, key) {
@@ -338,6 +349,14 @@ export class TeleprompterSession {
         return new Response("Expected WebSocket upgrade", { status: 426 });
       }
 
+      // Security: cap concurrent clients per session to prevent memory exhaustion
+      if (this.clients.size >= 50) {
+        return new Response(
+          JSON.stringify({ error: "Session at client limit (50). Close another connection first." }),
+          { status: 429, headers: { "content-type": "application/json" } }
+        );
+      }
+
       const [client, server] = Object.values(new WebSocketPair());
       server.accept();
 
@@ -449,6 +468,18 @@ export default {
 
       // ── WebSocket connection ────────────────────────────────────────────
       if (action === "ws") {
+        // Security: validate auth on WS upgrade — prevents session hijacking
+        // Accept Bearer in Authorization header or ?token= query param
+        // (query param supports browser WebSocket API which can't set custom headers)
+        const wsToken = (request.headers.get("authorization") || "")
+          .replace(/^bearer\s+/i, "").trim() || url.searchParams.get("token") || "";
+        const expected = (env.RELAY_AUTH_TOKEN || "").trim();
+        if (expected && wsToken !== expected) {
+          return new Response(
+            JSON.stringify({ error: "Unauthorized — provide Authorization: Bearer {token} or ?token= param" }),
+            { status: 401, headers: { "content-type": "application/json" } }
+          );
+        }
         // Forward WebSocket upgrade to Durable Object
         return doStub.fetch(new Request(
           `https://internal/teleprompter?action=connect&sessionId=${sessionId}`,
