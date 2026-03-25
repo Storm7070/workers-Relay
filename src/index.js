@@ -65,6 +65,7 @@ const ALLOWED_ORIGINS = new Set([
   "https://app.primecoreintelligence.com",
   "https://assist.primecoreintelligence.com",
   "https://api.primecoreintelligence.com",
+  "https://relay.primecoreintelligence.com",
   "https://primebpo.primecoreintelligence.com",
 ]);
 
@@ -808,8 +809,6 @@ export default {
       const errors = [];
       if (!body.name?.trim())        errors.push("name required");
       if (!isValidEmail(body.email)) errors.push("valid email required");
-      if (!body.company?.trim())     errors.push("company required");
-      if (!body.ccaas?.trim())       errors.push("ccaas platform required");
       if (errors.length) return json({ ok:false, errors }, 422, origin);
 
       const id = `pilot_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
@@ -817,12 +816,12 @@ export default {
         id, tenantId:"public",
         name:     sanitize(body.name),
         email:    sanitize(body.email, 200),
-        company:  sanitize(body.company),
-        ccaas:    sanitize(body.ccaas),
-        volume:   sanitize(body.volume || ""),
+        company:  sanitize(body.company || "Not provided"),
+        ccaas:    sanitize(body.ccaas   || "Not specified"),
+        volume:   sanitize(body.volume  || ""),
         vertical: sanitize(body.vertical || ""),
-        notes:    sanitize(body.notes || "", 1000),
-        source:   sanitize(body.source || "pilot.primecoreintelligence.com", 200),
+        notes:    sanitize(body.notes   || "", 1000),
+        source:   sanitize(body.source  || "primecoreintelligence.com", 200),
         status:   "new",
         ts:       new Date().toISOString(),
       };

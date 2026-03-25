@@ -5,19 +5,8 @@
   "compatibility_date": "2026-01-19",
   "observability": { "enabled": true },
 
-  // ── KV Namespaces ─────────────────────────────────────────────────────
-  "kv_namespaces": [
-    {
-      "binding": "RELAY_STATE",
-      "id": "0b666aeb10344273adefd8ca0b13dd7f",
-      "preview_id": "0b666aeb10344273adefd8ca0b13dd7f"
-    },
-    {
-      "binding": "RELAY_EVENTS",
-      "id": "0b666aeb10344273adefd8ca0b13dd7f",
-      "preview_id": "0b666aeb10344273adefd8ca0b13dd7f"
-    }
-  ],
+  // ── KV Namespaces — wire after deploy ────────────────────────────────
+  // "kv_namespaces": [ ... ],  // add back once KV token perms confirmed
 
   // ── Durable Objects — TeleprompterSession ────────────────────────────
   // Each sales session gets its own Durable Object instance.
@@ -34,7 +23,7 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_classes": ["TeleprompterSession"]
+      "new_sqlite_classes": ["TeleprompterSession"]
     }
   ]
 
