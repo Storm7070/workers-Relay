@@ -759,6 +759,94 @@ export class TeleprompterSession {
 // MAIN FETCH HANDLER
 // ═════════════════════════════════════════════════════════════════════════
 export default {
+  // ── Cron: daily follow-up sequence processor (10:00 UTC) ─────────────
+  async scheduled(event, env, ctx) {
+    if (!env.RELAY_STATE) return;
+    const now = Date.now();
+    try {
+      // List all follow-up keys
+      const keys = await env.RELAY_STATE.list({ prefix: "tenant:public:followup:" });
+      for (const key of (keys.keys || [])) {
+        try {
+          const raw = await env.RELAY_STATE.get(key.name);
+          if (!raw) continue;
+          const item = JSON.parse(raw);
+          if (!item.seq || !item.record) continue;
+
+          const createdAt = item.createdAt || now;
+          const daysSince = (now - createdAt) / (1000 * 60 * 60 * 24);
+          const record    = item.record;
+          const lang      = record.lang || "en";
+
+          for (const step of item.seq) {
+            if (step.sent) continue;
+            if (daysSince < step.daysOut) continue;
+
+            // Time to send this step
+            const subjects = {
+              roi_followup: {
+                en: `Your PrimeCore ROI estimate — ${record.company}`,
+                es: `Su estimación de ROI con PrimeCore — ${record.company}`,
+                pt: `Sua estimativa de ROI com PrimeCore — ${record.company}`,
+              },
+              case_study: {
+                en: `How similar operations cut call costs by 78%`,
+                es: `Cómo operaciones similares redujeron costos un 78%`,
+                pt: `Como operações similares reduziram custos em 78%`,
+              },
+              closing_loop: {
+                en: `Closing the loop — PrimeCore pilot for ${record.company}`,
+                es: `Cerrando el ciclo — piloto PrimeCore para ${record.company}`,
+                pt: `Encerrando o ciclo — piloto PrimeCore para ${record.company}`,
+              },
+            };
+
+            const bodies = {
+              roi_followup: {
+                en: `Hi ${record.name},\n\nFollowing up on your PrimeCore Intelligence request from a few days ago.\n\nBased on your volume (${record.volume}), our model estimates $${record.roi ? Math.abs(record.roi.netMonthly).toLocaleString() : "8,000–24,000"}/month in net savings after plan cost.\n\nIf that number is interesting, reply here and I'll set up a 20-minute compatibility check — no commitment, just numbers.\n\nLester\nFounder — PrimeCore Intelligence`,
+                es: `Hola ${record.name},\n\nSiguiendo con su solicitud de PrimeCore Intelligence de hace unos días.\n\nBasado en su volumen (${record.volume}), nuestro modelo estima $${record.roi ? Math.abs(record.roi.netMonthly).toLocaleString() : "8,000–24,000"}/mes en ahorros netos.\n\nSi ese número le interesa, responda aquí y coordino una verificación de compatibilidad de 20 minutos.\n\nLester\nFundador — PrimeCore Intelligence`,
+                pt: `Olá ${record.name},\n\nSeguindo com sua solicitação da PrimeCore Intelligence de alguns dias atrás.\n\nCom base no seu volume (${record.volume}), nosso modelo estima $${record.roi ? Math.abs(record.roi.netMonthly).toLocaleString() : "8.000–24.000"}/mês em economias líquidas.\n\nSe esse número for interessante, responda aqui e agendo uma verificação de compatibilidade de 20 minutos.\n\nLester\nFundador — PrimeCore Intelligence`,
+              },
+              case_study: {
+                en: `Hi ${record.name},\n\nSharing a quick data point that might be relevant to your evaluation:\n\nA logistics operator with a similar profile to yours — 22,000 calls/month, 12 agents — reduced their per-call cost from $6.50 to $0.04 on Tier-1 volume. AHT dropped from 5:40 to under 2 minutes. Six weeks, no SLA breaches.\n\nHappy to walk you through exactly how that was configured if you want a 20-minute call.\n\nLester\nFounder — PrimeCore Intelligence`,
+                es: `Hola ${record.name},\n\nComparto un dato que podría ser relevante para su evaluación:\n\nUn operador logístico con un perfil similar al suyo — 22,000 llamadas/mes, 12 agentes — redujo su costo por llamada de $6.50 a $0.04 en volumen Nivel 1. El AHT bajó de 5:40 a menos de 2 minutos. Seis semanas, sin incumplimientos de SLA.\n\nCon gusto le explico exactamente cómo se configuró si quiere una llamada de 20 minutos.\n\nLester\nFundador — PrimeCore Intelligence`,
+                pt: `Olá ${record.name},\n\nCompartilhando um dado que pode ser relevante para sua avaliação:\n\nUm operador logístico com um perfil semelhante ao seu — 22.000 chamadas/mês, 12 agentes — reduziu o custo por chamada de $6,50 para $0,04 no volume Nível 1. O AHT caiu de 5:40 para menos de 2 minutos. Seis semanas, sem violações de SLA.\n\nPosso explicar exatamente como foi configurado se quiser uma chamada de 20 minutos.\n\nLester\nFundador — PrimeCore Intelligence`,
+              },
+              closing_loop: {
+                en: `Hi ${record.name},\n\nClosing the loop on your PrimeCore pilot request.\n\nIf the timing isn't right, no problem at all — I'll stop following up after this. If you want to revisit when the time is right, the pilot link is always open: https://pilot.primecoreintelligence.com\n\nEither way, good luck with the operation.\n\nLester\nFounder — PrimeCore Intelligence`,
+                es: `Hola ${record.name},\n\nCerrando el ciclo sobre su solicitud de piloto PrimeCore.\n\nSi el momento no es el correcto, no hay problema — dejaré de hacer seguimiento después de este mensaje. Si quiere retomarlo cuando sea el momento adecuado, el enlace del piloto siempre está disponible: https://pilot.primecoreintelligence.com\n\nDe cualquier forma, mucho éxito con la operación.\n\nLester\nFundador — PrimeCore Intelligence`,
+                pt: `Olá ${record.name},\n\nEncerrando o ciclo sobre sua solicitação de piloto PrimeCore.\n\nSe o momento não é o certo, sem problema — vou parar de fazer follow-up após esta mensagem. Se quiser retomar quando o momento for certo, o link do piloto está sempre disponível: https://pilot.primecoreintelligence.com\n\nDe qualquer forma, boa sorte com a operação.\n\nLester\nFundador — PrimeCore Intelligence`,
+              },
+            };
+
+            const subject = (subjects[step.type] || {})[lang] || subjects.roi_followup.en;
+            const body    = (bodies[step.type] || {})[lang]    || bodies.roi_followup.en;
+
+            await sendEmail(env, {
+              to:      record.email,
+              subject,
+              body,
+              replyTo: "sales@primecoreintelligence.com",
+            });
+
+            step.sent   = true;
+            step.sentAt = new Date().toISOString();
+            break; // only one step per run
+          }
+
+          // Update KV with sent flags
+          const allSent = item.seq.every(s => s.sent);
+          if (allSent) {
+            await env.RELAY_STATE.delete(key.name);
+          } else {
+            await env.RELAY_STATE.put(key.name, JSON.stringify(item),
+              { expirationTtl: 60 * 60 * 24 * 14 });
+          }
+        } catch(e) { /* skip broken entries */ }
+      }
+    } catch(e) { /* fail silently */ }
+  },
+
   async fetch(request, env, ctx) {
     const origin   = request.headers.get("Origin") || "";
     const url      = new URL(request.url);

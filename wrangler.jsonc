@@ -28,7 +28,14 @@
       "tag": "v1",
       "new_sqlite_classes": ["TeleprompterSession"]
     }
-  ]
+  ],
+
+  // ── Cron Triggers — follow-up sequence executor ─────────────────────
+  "triggers": {
+    "crons": [
+      "0 10 * * *"
+    ]
+  }
 
   // ── Secrets ───────────────────────────────────────────────────────────
   // RELAY_AUTH_TOKEN             — Bearer token for authenticated endpoints
