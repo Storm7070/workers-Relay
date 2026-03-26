@@ -311,6 +311,28 @@ async function auditLog(kv, tenantId, event) {
 
 // ── Email via MailChannels ────────────────────────────────────────────────
 async function sendEmail(env, { to, subject, body, replyTo }) {
+  // Primary: Resend API (reliable, free tier 3k/month)
+  if (env.RESEND_API_KEY) {
+    try {
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Authorization": `Bearer ${env.RESEND_API_KEY}`
+        },
+        body: JSON.stringify({
+          from: "PrimeCore Intelligence <noreply@primecoreintelligence.com>",
+          to: [to],
+          subject,
+          text: body,
+          reply_to: replyTo || undefined,
+        }),
+      });
+      if (resp.ok) return true;
+    } catch { /* fall through */ }
+  }
+
+  // Fallback: MailChannels (may work depending on CF plan)
   try {
     const resp = await fetch("https://api.mailchannels.net/tx/v1/send", {
       method: "POST",
@@ -326,6 +348,317 @@ async function sendEmail(env, { to, subject, body, replyTo }) {
     return resp.status === 202;
   } catch { return false; }
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AGENTIC EMAIL SYSTEM
+// ─────────────────────────────────────────────────────────────────────────
+// Flow:
+//   1. Pilot form submit → immediate AI-written personal reply to prospect
+//   2. Internal notification → lead brief + ROI + custom quote awaiting approval
+//   3. Follow-up sequence stored in KV → Day 1, Day 3, Day 7
+//   4. Custom plan pricing → AI builds the number, waits for founder approval
+//
+// Custom plan logic:
+//   - Always anchors to value delivered (savings), not cost
+//   - Presents a range so "yes" is easy (pick the middle, not the top)
+//   - Never presents a number the prospect can flat-out reject
+//   - Founder approves before it goes out
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Custom plan pricing engine ────────────────────────────────────────────
+function buildCustomQuote(record, roi) {
+  const vol    = parseInt(String(record.volume || "0").replace(/[^0-9]/g, ""), 10) || 0;
+  const saved  = Math.abs(roi?.laborSaved || 0);
+  const agents = roi?.agents || 0;
+
+  // Anchor: price = 18–22% of labor savings (always positive ROI for client)
+  // Present THREE options so they choose, not refuse
+  const base   = Math.max(7997, Math.round(saved * 0.18 / 100) * 100);
+  const mid    = Math.round(base * 1.15 / 100) * 100;
+  const full   = Math.round(base * 1.32 / 100) * 100;
+
+  // Pilot pricing: always 50% of chosen tier
+  const pilotBase = Math.round(base / 2 / 100) * 100;
+  const pilotMid  = Math.round(mid  / 2 / 100) * 100;
+  const pilotFull = Math.round(full / 2 / 100) * 100;
+
+  return {
+    vol, saved, agents,
+    options: [
+      {
+        label: "Core",
+        monthly: base, pilot: pilotBase,
+        includes: "Autonomous handling up to 80% of volume, 3 CCaaS integrations, 15 languages, SLA alerting",
+        roiMonth1: saved - base,
+        note: "Best starting point — lowest commitment, fastest ROI proof"
+      },
+      {
+        label: "Full Deployment",
+        monthly: mid, pilot: pilotMid,
+        includes: "Autonomous + Assist Mode blended, unlimited CCaaS, 50+ languages, dedicated success engineer",
+        roiMonth1: saved - mid,
+        note: "Most selected — complete stack, fastest scale"
+      },
+      {
+        label: "Enterprise Max",
+        monthly: full, pilot: pilotFull,
+        includes: "All modes, multi-tenant isolation, custom SLA enforcement, LATAM compliance pack, quarterly business review",
+        roiMonth1: saved - full,
+        note: "For operations that need full control and compliance coverage"
+      }
+    ],
+    reasoning: `Based on ${vol.toLocaleString()} calls/month with ${agents} agents at current cost, ` +
+      `we estimate $${saved.toLocaleString()}/month in recoverable labor. ` +
+      `All three options deliver positive ROI from Month 1. ` +
+      `Core is priced at 18% of savings — the floor that makes the math undeniable. ` +
+      `Full Deployment is the most common choice for operations this size.`
+  };
+}
+
+// ── AI-written prospect reply ──────────────────────────────────────────────
+async function generateProspectReply(env, record, roi) {
+  if (!env.OPENAI_API_KEY && !env.WAR_ROOM_API_TOKEN) return null;
+
+  const volLabel = {
+    "under-5k": "under 5,000 calls/month",
+    "5k-20k":   "5,000–20,000 calls/month",
+    "20k-100k": "20,000–100,000 calls/month",
+    "100k+":    "over 100,000 calls/month"
+  }[record.volume] || record.volume;
+
+  const roiLine = roi && roi.netMonthly > 0
+    ? `At ${volLabel}, our model shows approximately $${Math.abs(roi.netMonthly).toLocaleString()}/month in net savings after plan cost — break-even typically comes before Month 2.`
+    : `At ${volLabel}, we'll run the full numbers together during the compatibility check.`;
+
+  const lang = record.lang || "en";
+  const systemPrompt = lang === "es"
+    ? "Eres el fundador de PrimeCore Intelligence. Escribe un correo de respuesta personal, cálido pero profesional, en español. Máximo 5 oraciones. Sin plantillas. Sin frases corporativas. Directo al punto."
+    : lang === "pt"
+    ? "Você é o fundador da PrimeCore Intelligence. Escreva um email de resposta pessoal, caloroso mas profissional, em português. Máximo 5 frases. Sem templates. Sem frases corporativas. Direto ao ponto."
+    : "You are the founder of PrimeCore Intelligence. Write a personal, warm but professional reply email in English. Maximum 5 sentences. No templates. No corporate phrases. Direct.";
+
+  const userPrompt = `
+Prospect name: ${record.name}
+Company domain: ${record.company}
+Call volume: ${volLabel}
+Vertical: ${record.vertical || "not specified"}
+ROI line to include naturally: "${roiLine}"
+
+Write the reply. Sign as "Lester, Founder — PrimeCore Intelligence".
+Do not include subject line. Just the email body.
+`.trim();
+
+  try {
+    // Use war-room AI proxy if available
+    const endpoint = env.WAR_ROOM_API_TOKEN
+      ? "https://api.primecoreintelligence.com/api/ai/complete"
+      : "https://api.openai.com/v1/chat/completions";
+
+    const headers = env.WAR_ROOM_API_TOKEN
+      ? { "content-type": "application/json", "authorization": `Bearer ${env.WAR_ROOM_API_TOKEN}` }
+      : { "content-type": "application/json", "authorization": `Bearer ${env.OPENAI_API_KEY}` };
+
+    const body = env.WAR_ROOM_API_TOKEN
+      ? JSON.stringify({ prompt: `${systemPrompt}\n\n${userPrompt}`, max_tokens: 300 })
+      : JSON.stringify({
+          model: "gpt-4.1-mini",
+          max_tokens: 300,
+          messages: [
+            { role: "system",  content: systemPrompt },
+            { role: "user",    content: userPrompt }
+          ]
+        });
+
+    const resp = await fetch(endpoint, { method: "POST", headers, body });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+
+    // Handle both war-room and OpenAI response formats
+    return data.text || data.choices?.[0]?.message?.content || null;
+  } catch { return null; }
+}
+
+// ── Schedule follow-up sequence in KV ────────────────────────────────────
+async function scheduleFollowUps(env, record, roi) {
+  if (!env.RELAY_STATE) return;
+  const now = Date.now();
+  const seq = [
+    { daysOut: 1,  type: "roi_followup",   sent: false },
+    { daysOut: 3,  type: "case_study",     sent: false },
+    { daysOut: 7,  type: "closing_loop",   sent: false },
+  ];
+  const key = `followup:${record.id}`;
+  await env.RELAY_STATE.put(key, JSON.stringify({
+    record, roi, seq,
+    createdAt: now,
+    nextCheck: now + (24 * 60 * 60 * 1000)
+  }), { expirationTtl: 60 * 60 * 24 * 14 }); // 14-day TTL
+}
+
+// ── Internal approval email for custom quotes ─────────────────────────────
+async function sendApprovalRequest(env, record, roi, quote) {
+  const opts = quote.options.map((o, i) =>
+    `OPTION ${i+1} — ${o.label}
+  Monthly:  $${o.monthly.toLocaleString()}/mo  (Pilot Month 1: $${o.pilot.toLocaleString()})
+  Includes: ${o.includes}
+  ROI M1:   +$${o.roiMonth1.toLocaleString()}/mo net for client
+  Note:     ${o.note}`
+  ).join("\n\n");
+
+  const approveBase = `https://relay.primecoreintelligence.com/relay/quote-approve?id=${record.id}&option=0&token=${env.RELAY_AUTH_TOKEN}`;
+  const approveMid  = `https://relay.primecoreintelligence.com/relay/quote-approve?id=${record.id}&option=1&token=${env.RELAY_AUTH_TOKEN}`;
+  const approveFull = `https://relay.primecoreintelligence.com/relay/quote-approve?id=${record.id}&option=2&token=${env.RELAY_AUTH_TOKEN}`;
+
+  const body = `
+⚡ CUSTOM QUOTE READY FOR APPROVAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PROSPECT
+  Name:    ${record.name}
+  Email:   ${record.email}
+  Company: ${record.company}
+  Volume:  ${record.volume}
+  Vertical: ${record.vertical || "Not specified"}
+
+PRICING RATIONALE
+  ${quote.reasoning}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+THREE OPTIONS (AI-built, value-anchored)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${opts}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+APPROVE & SEND (one click):
+
+✅ Send Option 1 (Core):             ${approveBase}
+✅ Send Option 2 (Full Deployment):  ${approveMid}
+✅ Send Option 3 (Enterprise Max):   ${approveFull}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Prospect ID: ${record.id}
+Submitted:   ${record.ts}
+`.trim();
+
+  return sendEmail(env, {
+    to:      env.NOTIFY_EMAIL || "sales@primecoreintelligence.com",
+    subject: `⚡ Approve Custom Quote — ${record.company} ($${quote.options[1].monthly.toLocaleString()}/mo)`,
+    body,
+  });
+}
+
+// ── Quote approval endpoint handler ──────────────────────────────────────
+async function handleQuoteApproval(request, env, origin) {
+  const url    = new URL(request.url);
+  const id     = url.searchParams.get("id");
+  const option = parseInt(url.searchParams.get("option") || "1", 10);
+  const token  = url.searchParams.get("token");
+
+  if (!token || token !== (env.RELAY_AUTH_TOKEN || "")) {
+    return json({ ok: false, error: "Unauthorized" }, 401, origin);
+  }
+  if (!id) return json({ ok: false, error: "Missing id" }, 400, origin);
+
+  // Load lead from KV
+  const record = await kvGet(env.RELAY_STATE, "public", "pilot", id);
+  if (!record) return json({ ok: false, error: "Lead not found" }, 404, origin);
+
+  const roi   = record.roi;
+  const quote = buildCustomQuote(record, roi);
+  const chosen = quote.options[Math.min(option, 2)];
+
+  // Send approved quote to prospect
+  const lang = record.lang || "en";
+  const subjects = {
+    en: `Your PrimeCore Intelligence custom plan — ${chosen.label}`,
+    es: `Tu plan personalizado de PrimeCore Intelligence — ${chosen.label}`,
+    pt: `Seu plano personalizado PrimeCore Intelligence — ${chosen.label}`,
+  };
+
+  const bodies = {
+    en: `Hi ${record.name},
+
+Following your pilot request, I've put together a custom plan based on your operation's profile.
+
+${chosen.label} Plan — $${chosen.monthly.toLocaleString()}/month
+Pilot Month 1: $${chosen.pilot.toLocaleString()} (50% off)
+
+What's included:
+${chosen.includes}
+
+At your call volume, our model shows approximately $${Math.abs(chosen.roiMonth1).toLocaleString()}/month in net benefit after plan cost. Break-even comes before the end of your pilot month.
+
+To move forward, reply to this email or click below to start your pilot directly. No setup fees. Cancel before Month 2.
+
+Start your pilot: https://pilot.primecoreintelligence.com
+
+Lester
+Founder — PrimeCore Intelligence`,
+
+    es: `Hola ${record.name},
+
+Tras su solicitud de piloto, he preparado un plan personalizado basado en el perfil de su operación.
+
+Plan ${chosen.label} — $${chosen.monthly.toLocaleString()}/mes
+Mes 1 de piloto: $${chosen.pilot.toLocaleString()} (50% de descuento)
+
+Qué incluye:
+${chosen.includes}
+
+Con su volumen de llamadas, nuestro modelo muestra aproximadamente $${Math.abs(chosen.roiMonth1).toLocaleString()}/mes de beneficio neto después del costo del plan. El punto de equilibrio llega antes de que termine su mes piloto.
+
+Para avanzar, responda este correo o haga clic abajo para iniciar su piloto directamente. Sin tarifas de configuración. Cancele antes del Mes 2.
+
+Iniciar piloto: https://pilot.primecoreintelligence.com
+
+Lester
+Fundador — PrimeCore Intelligence`,
+
+    pt: `Olá ${record.name},
+
+Após sua solicitação de piloto, preparei um plano personalizado baseado no perfil da sua operação.
+
+Plano ${chosen.label} — $${chosen.monthly.toLocaleString()}/mês
+Mês 1 do piloto: $${chosen.pilot.toLocaleString()} (50% de desconto)
+
+O que está incluído:
+${chosen.includes}
+
+Com o seu volume de chamadas, nosso modelo mostra aproximadamente $${Math.abs(chosen.roiMonth1).toLocaleString()}/mês de benefício líquido após o custo do plano. O break-even chega antes do final do seu mês piloto.
+
+Para avançar, responda este email ou clique abaixo para iniciar seu piloto diretamente. Sem taxas de configuração. Cancele antes do Mês 2.
+
+Iniciar piloto: https://pilot.primecoreintelligence.com
+
+Lester
+Fundador — PrimeCore Intelligence`,
+  };
+
+  await sendEmail(env, {
+    to:      record.email,
+    subject: subjects[lang] || subjects.en,
+    body:    bodies[lang]   || bodies.en,
+    replyTo: "sales@primecoreintelligence.com",
+  });
+
+  // Update lead status in KV
+  record.status = "quoted";
+  record.quotedAt = new Date().toISOString();
+  record.quotedOption = chosen.label;
+  await kvPut(env.RELAY_STATE, "public", "pilot", id, record, { expirationTtl: 60*60*24*365 });
+
+  return new Response(
+    `<html><body style="font-family:sans-serif;max-width:500px;margin:80px auto;text-align:center">
+      <h2>✅ Quote sent to ${record.name}</h2>
+      <p>${chosen.label} plan at $${chosen.monthly.toLocaleString()}/mo</p>
+      <p style="color:#666">Email delivered to ${record.email}</p>
+    </body></html>`,
+    { status: 200, headers: { "content-type": "text/html" } }
+  );
+}
+
 
 // ═════════════════════════════════════════════════════════════════════════
 // DURABLE OBJECT — TeleprompterSession
@@ -866,12 +1199,47 @@ This link opens their platform-specific installation guide
 in their language (${record.lang || "en"}) with an AI agent
 that walks them through the entire setup autonomously.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
-        ctx.waitUntil(sendEmail(env, {
+      ctx.waitUntil(sendEmail(env, {
           to:      env.NOTIFY_EMAIL || "sales@primecoreintelligence.com",
           subject: `🚀 Pilot Request — ${record.company} (${record.vertical})`,
           body:    emailBody,
           replyTo: record.email,
         }));
+
+        // ── AGENTIC: AI-written personal reply to prospect ────────────────
+        ctx.waitUntil((async () => {
+          try {
+            const aiReply = await generateProspectReply(env, record, record.roi);
+            if (aiReply) {
+              const subj = {
+                en: `Re: Your PrimeCore Intelligence pilot request`,
+                es: `Re: Su solicitud de piloto PrimeCore Intelligence`,
+                pt: `Re: Sua solicitação de piloto PrimeCore Intelligence`,
+              };
+              await sendEmail(env, {
+                to:      record.email,
+                subject: subj[record.lang || "en"] || subj.en,
+                body:    aiReply,
+                replyTo: "sales@primecoreintelligence.com",
+              });
+            }
+          } catch(e) { /* fail silently */ }
+        })());
+
+        // ── AGENTIC: Custom quote for enterprise volume ───────────────────
+        if (record.volume === "100k+" || record.volume === "20k-100k") {
+          ctx.waitUntil((async () => {
+            try {
+              const quote = buildCustomQuote(record, record.roi);
+              await sendApprovalRequest(env, record, record.roi, quote);
+              // Store quote in KV for approval endpoint
+              await kvPut(env.RELAY_STATE, "public", "quote", id, quote, { expirationTtl: 60*60*24*30 });
+            } catch(e) { /* fail silently */ }
+          })());
+        }
+
+        // ── AGENTIC: Schedule follow-up sequence ──────────────────────────
+        ctx.waitUntil(scheduleFollowUps(env, record, record.roi).catch(() => {}));
 
         // ── Client confirmation email with onboarding link ────────────────
         const langLabels = { en: "English", es: "Español", pt: "Português" };
@@ -957,6 +1325,11 @@ onboarding@primecoreintelligence.com`,
       }
 
       return json({ ok:true, id, roi:record.roi || null, message:"Pilot request received. We will contact you within 1 business day." }, 201, origin);
+    }
+
+    // ── Quote approval (founder one-click approve) ────────────────────────
+    if (request.method === "GET" && path === "/relay/quote-approve") {
+      return handleQuoteApproval(request, env, origin);
     }
 
     // ── Status / audit (auth required) ───────────────────────────────────

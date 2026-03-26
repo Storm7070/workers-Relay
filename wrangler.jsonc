@@ -5,8 +5,11 @@
   "compatibility_date": "2026-01-19",
   "observability": { "enabled": true },
 
-  // ── KV Namespaces — wire after deploy ────────────────────────────────
-  // "kv_namespaces": [ ... ],  // add back once KV token perms confirmed
+  // ── KV Namespaces — managed via dashboard (token lacks kv:write) ─────
+  // "kv_namespaces": [ ... ],
+
+  // ── Custom Domain — managed via dashboard ────────────────────────────
+  // relay.primecoreintelligence.com set as custom domain in CF dashboard
 
   // ── Durable Objects — TeleprompterSession ────────────────────────────
   // Each sales session gets its own Durable Object instance.
