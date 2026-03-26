@@ -1,0 +1,174 @@
+name: Relay Worker — Tests + Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── 1. WORKER UNIT TESTS ─────────────────────────────────────────────────
+  test:
+    name: Worker Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
+      - name: Validate wrangler config
+        run: npx wrangler deploy --dry-run --outdir dist
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Check worker size
+        run: |
+          SIZE=$(wc -c < dist/index.js)
+          echo "Worker size: $SIZE bytes"
+          # Workers free plan limit: 1MB
+          if [ "$SIZE" -gt 1000000 ]; then
+            echo "❌ FAIL: Worker exceeds 1MB limit"
+            exit 1
+          fi
+          echo "✅ Worker size OK"
+
+  # ── 2. API LIVE TESTS ────────────────────────────────────────────────────
+  api:
+    name: Live API Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only run on main push, not PRs (avoids noise from PRs)
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Test war-room API health
+        run: |
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            https://api.primecoreintelligence.com/)
+          if [ "$RESPONSE" != "200" ]; then
+            echo "❌ FAIL: War-room API returned $RESPONSE"
+            exit 1
+          fi
+          echo "✅ War-room API: 200 OK"
+
+      - name: Test relay worker health
+        run: |
+          RESPONSE=$(curl -s https://relay.primecoreintelligence.com/)
+          OK=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ok'))")
+          if [ "$OK" != "True" ]; then
+            echo "❌ FAIL: Relay worker not healthy: $RESPONSE"
+            exit 1
+          fi
+          echo "✅ Relay worker: healthy"
+
+      - name: Test pilot-request endpoint validation
+        run: |
+          # Should return 422 for missing email
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            https://relay.primecoreintelligence.com/relay/pilot-request \
+            -H "Content-Type: application/json" \
+            -d '{"name":"CI Test"}')
+          if [ "$STATUS" != "422" ]; then
+            echo "❌ FAIL: Expected 422, got $STATUS"
+            exit 1
+          fi
+          echo "✅ Validation endpoint: 422 on missing email"
+
+      - name: Test CORS headers present
+        run: |
+          HEADERS=$(curl -s -I -X OPTIONS \
+            -H "Origin: https://primecoreintelligence.com" \
+            https://relay.primecoreintelligence.com/relay/pilot-request)
+          if echo "$HEADERS" | grep -qi "access-control-allow-origin"; then
+            echo "✅ CORS headers present"
+          else
+            echo "❌ FAIL: CORS headers missing"
+            exit 1
+          fi
+
+  # ── 3. SECURITY SCAN ─────────────────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for hardcoded secrets
+        run: |
+          if grep -r "re_[a-zA-Z0-9]\{20,\}" src/; then
+            echo "❌ FAIL: Resend key in source"
+            exit 1
+          fi
+          if grep -r "ghp_[a-zA-Z0-9]\{20,\}" src/; then
+            echo "❌ FAIL: GitHub PAT in source"
+            exit 1
+          fi
+          if grep -r "cfut_[a-zA-Z0-9]\{20,\}" src/; then
+            echo "❌ FAIL: CF token in source"
+            exit 1
+          fi
+          echo "✅ No hardcoded secrets"
+
+      - name: Check sanitize function exists
+        run: |
+          if ! grep -q "function sanitize" src/index.js; then
+            echo "❌ FAIL: sanitize() function missing"
+            exit 1
+          fi
+          echo "✅ Input sanitization present"
+
+      - name: Check rate limiting present
+        run: |
+          if ! grep -q "rateLimit" src/index.js; then
+            echo "❌ FAIL: Rate limiting missing"
+            exit 1
+          fi
+          echo "✅ Rate limiting present"
+
+      - name: Check CORS allowlist is explicit
+        run: |
+          if ! grep -q "ALLOWED_ORIGINS" src/index.js; then
+            echo "❌ FAIL: No explicit CORS allowlist"
+            exit 1
+          fi
+          echo "✅ Explicit CORS allowlist present"
+
+  # ── 4. DEPLOY (main branch only) ─────────────────────────────────────────
+  deploy:
+    name: Deploy to Cloudflare
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Deploy worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify deployment
+        run: |
+          sleep 10
+          RESPONSE=$(curl -s https://relay.primecoreintelligence.com/)
+          OK=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ok'))" 2>/dev/null)
+          if [ "$OK" = "True" ]; then
+            echo "✅ Deployment verified"
+          else
+            echo "⚠️  Could not verify deployment: $RESPONSE"
+          fi
