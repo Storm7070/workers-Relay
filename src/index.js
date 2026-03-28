@@ -608,6 +608,270 @@ Submitted:   ${record.ts}
   });
 }
 
+// ── Notion Integration ────────────────────────────────────────────────────
+// Creates a Leads & Deals page in Notion on every pilot request.
+// Requires NOTION_API_TOKEN secret in Cloudflare Worker settings.
+
+const NOTION_LEADS_DB   = "a6f67944-772d-4396-b7e3-c380d1b9186b";
+const NOTION_PILOTS_DB  = "65ebde47a45241e4be224f07f071b1b3";
+const NOTION_PLAYBOOKS_DB = "670b80a8-4e2a-4484-9027-34ac592cdc68";
+
+// Map form volume values to Notion select options
+const VOLUME_MAP = {
+  "under-5k":   "Under 5k",
+  "5k-20k":     "5k-20k",
+  "20k-100k":   "20k-100k",
+  "100k+":      "100k+",
+};
+
+// Map vertical values to Notion select options
+const VERTICAL_MAP = {
+  "logistics":    "Logistics/3PL",
+  "logistics3pl": "Logistics/3PL",
+  "healthcare":   "Healthcare",
+  "financial":    "Financial Services",
+  "fleet":        "Fleet",
+  "bpo":          "BPO",
+  "latam":        "LATAM Enterprise",
+};
+
+// Map CCaaS to Notion select options
+const CCAAS_MAP = {
+  "five9":       "Five9",
+  "genesys":     "Genesys",
+  "ringcentral": "RingCentral",
+  "3cx":         "3CX",
+  "atento":      "Atento",
+  "bliss":       "Bliss",
+};
+
+// Classify inquiry type from notes field
+function classifyInquiry(record) {
+  const notes = (record.notes || "").toLowerCase();
+  const volume = record.volume || "";
+  if (volume === "100k+") return "Volume Deal";
+  if (notes.includes("hipaa") || notes.includes("soc2") || notes.includes("gdpr") || notes.includes("baa") || notes.includes("compliance")) return "Compliance Docs";
+  if (notes.includes("integrat") || notes.includes("webhook") || notes.includes("api")) return "Integration Question";
+  if (notes.includes("feature") || notes.includes("custom") || notes.includes("roadmap")) return "Feature Request";
+  if (notes.includes("partner") || notes.includes("resell") || notes.includes("white label")) return "Partnership";
+  if (notes.includes("price") || notes.includes("pricing") || notes.includes("discount") || notes.includes("quote")) return "Custom Pricing";
+  return "Standard Pilot";
+}
+
+// Score priority from record
+function scorePriority(record) {
+  const vol = record.volume || "";
+  const type = classifyInquiry(record);
+  if (vol === "100k+" || type === "Volume Deal" || type === "Custom Pricing") return "High";
+  if (vol === "20k-100k" || type === "Compliance Docs") return "Medium";
+  return "Low";
+}
+
+// Estimate deal value from volume
+function estimateDealValue(record) {
+  const volMap = { "under-5k": 1200, "5k-20k": 2900, "20k-100k": 5800, "100k+": 12000 };
+  return volMap[record.volume] || 0;
+}
+
+// Normalize CCaaS name
+function normalizeCCaaS(raw) {
+  if (!raw) return null;
+  const key = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return CCAAS_MAP[key] || null;
+}
+
+// Normalize vertical
+function normalizeVertical(raw) {
+  if (!raw) return null;
+  const key = raw.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return VERTICAL_MAP[key] || null;
+}
+
+// Create a page in a Notion database via REST API
+async function notionCreatePage(token, databaseId, properties) {
+  const payload = {
+    parent: { database_id: databaseId },
+    properties: {},
+  };
+
+  for (const [key, value] of Object.entries(properties)) {
+    if (value === null || value === undefined) continue;
+
+    if (key === "__title__") {
+      payload.properties["Company"] = { title: [{ text: { content: String(value) } }] };
+    } else if (key === "__title_field__") {
+      // skip - used internally
+    } else if (typeof value === "boolean" || value === "__YES__" || value === "__NO__") {
+      payload.properties[key] = { checkbox: value === true || value === "__YES__" };
+    } else if (typeof value === "number") {
+      payload.properties[key] = { number: value };
+    } else if (value && typeof value === "object" && value._select) {
+      payload.properties[key] = { select: { name: value._select } };
+    } else if (value && typeof value === "object" && value._email) {
+      payload.properties[key] = { email: value._email };
+    } else if (value && typeof value === "object" && value._url) {
+      payload.properties[key] = { url: value._url };
+    } else {
+      payload.properties[key] = { rich_text: [{ text: { content: String(value).slice(0, 2000) } }] };
+    }
+  }
+
+  const resp = await fetch("https://api.notion.com/v1/pages", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Notion-Version": "2022-06-28",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Notion API error ${resp.status}: ${err.slice(0, 200)}`);
+  }
+
+  return resp.json();
+}
+
+// Main function: create Leads & Deals page + Active Pilots page
+async function createNotionLead(env, record, roi) {
+  if (!env.NOTION_API_TOKEN) return null;
+
+  try {
+    const inquiryType = classifyInquiry(record);
+    const priority    = scorePriority(record);
+    const dealValue   = estimateDealValue(record);
+    const ccaas       = normalizeCCaaS(record.ccaas);
+    const vertical    = normalizeVertical(record.vertical);
+    const lang        = (record.lang || "en").toUpperCase();
+    const volume      = VOLUME_MAP[record.volume] || record.volume || null;
+
+    const roiNote = roi && roi.netMonthly > 0
+      ? `Estimated savings: $${Math.abs(roi.netMonthly).toLocaleString()}/mo net. ROI Month 1 positive.`
+      : null;
+
+    const notesText = [
+      record.notes || null,
+      roiNote,
+      `Source: ${record.source || "primecoreintelligence.com"}`,
+    ].filter(Boolean).join(" | ");
+
+    // Create Leads & Deals page
+    const leadsPage = await notionCreatePage(env.NOTION_API_TOKEN, NOTION_LEADS_DB, {
+      "__title__": record.company || record.name,
+      "Contact Name":  record.name,
+      "Email":         { _email: record.email },
+      "Volume":        volume ? { _select: volume } : undefined,
+      "CCaaS Platform": ccaas ? { _select: ccaas } : undefined,
+      "Vertical":      vertical ? { _select: vertical } : undefined,
+      "Inquiry Type":  { _select: inquiryType },
+      "Priority":      { _select: priority },
+      "Language":      { _select: lang },
+      "Status":        { _select: "Not started" },
+      "Deal Value":    dealValue || undefined,
+      "Response Sent": "__NO__",
+      "Approval Pending": inquiryType === "Custom Pricing" || inquiryType === "Volume Deal" ? "__YES__" : "__NO__",
+      "Pilot ID":      record.id,
+      "Source Domain": record.source || "primecoreintelligence.com",
+      "Notes":         notesText,
+    });
+
+    // If volume deal or enterprise — also create Active Pilots page
+    if (record.volume === "20k-100k" || record.volume === "100k+") {
+      await notionCreatePage(env.NOTION_API_TOKEN, NOTION_PILOTS_DB, {
+        "__title__": record.company || record.name,
+        "Pilot ID":         record.id,
+        "Contact Name":     record.name,
+        "Contact Email":    { _email: record.email },
+        "CCaaS Platform":   ccaas ? { _select: ccaas } : undefined,
+        "Vertical":         vertical ? { _select: vertical } : undefined,
+        "Language":         { _select: lang },
+        "Plan":             { _select: "Growth" },
+        "Monthly Value":    dealValue || undefined,
+        "Week":             { _select: "Week 1 — Shadow Mode" },
+        "Shadow Mode Active": { _select: "Pending" },
+        "Cutover Approved": { _select: "Not Yet" },
+        "Health":           { _select: "On Track" },
+        "Next Action":      `Contact ${record.name} to confirm shadow mode setup. CCaaS: ${record.ccaas || "TBD"}`,
+      });
+    }
+
+    return {
+      pageId:       leadsPage.id,
+      pageUrl:      leadsPage.url,
+      inquiryType,
+      priority,
+    };
+
+  } catch (err) {
+    // Never block the main response — Notion failure is non-critical
+    console.error("Notion createLead failed:", err.message);
+    return null;
+  }
+}
+
+// Build Slack alert message
+function buildSlackAlert(record, notionResult, roi) {
+  const priority = notionResult?.priority || scorePriority(record);
+  const inquiryType = notionResult?.inquiryType || classifyInquiry(record);
+  const notionLink = notionResult?.pageUrl || null;
+
+  const priorityEmoji = { High: "🔴", Medium: "🟡", Low: "🟢" }[priority] || "🟢";
+  const roiLine = roi && roi.netMonthly > 0
+    ? `*Est. savings:* $${Math.abs(roi.netMonthly).toLocaleString()}/mo`
+    : "";
+
+  return {
+    text: `${priorityEmoji} New ${inquiryType} — ${record.company}`,
+    blocks: [
+      {
+        type: "header",
+        text: { type: "plain_text", text: `${priorityEmoji} ${inquiryType} — ${record.company}` }
+      },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `*Name:*\n${record.name}` },
+          { type: "mrkdwn", text: `*Email:*\n${record.email}` },
+          { type: "mrkdwn", text: `*Volume:*\n${record.volume || "not specified"}` },
+          { type: "mrkdwn", text: `*CCaaS:*\n${record.ccaas || "not specified"}` },
+          { type: "mrkdwn", text: `*Vertical:*\n${record.vertical || "not specified"}` },
+          { type: "mrkdwn", text: `*Priority:*\n${priority}` },
+        ].filter(f => f.text.text !== "not specified\nnot specified"),
+      },
+      roiLine ? {
+        type: "section",
+        text: { type: "mrkdwn", text: roiLine },
+      } : null,
+      notionLink ? {
+        type: "actions",
+        elements: [{
+          type: "button",
+          text: { type: "plain_text", text: "Open in Notion →" },
+          url: notionLink,
+          style: "primary",
+        }],
+      } : null,
+    ].filter(Boolean),
+  };
+}
+
+// Send Slack alert via webhook
+async function sendSlackAlert(env, record, notionResult, roi) {
+  if (!env.SLACK_WEBHOOK_URL) return;
+  try {
+    const payload = buildSlackAlert(record, notionResult, roi);
+    await fetch(env.SLACK_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.error("Slack alert failed:", err.message);
+  }
+}
+
 // ── Quote approval endpoint handler ──────────────────────────────────────
 async function handleQuoteApproval(request, env, origin) {
   const url    = new URL(request.url);
@@ -1382,7 +1646,15 @@ sales@primecoreintelligence.com`,
       // 4. Schedule follow-up sequence
       ctx.waitUntil(scheduleFollowUps(env, record, record.roi).catch(() => {}));
 
-      // 5. Forward to war-room
+      // 5. Create Notion lead page + fire Slack alert (non-blocking)
+      ctx.waitUntil((async () => {
+        try {
+          const notionResult = await createNotionLead(env, record, record.roi);
+          await sendSlackAlert(env, record, notionResult, record.roi);
+        } catch (e) { /* non-critical */ }
+      })());
+
+      // 6. Forward to war-room
       if (env.WAR_ROOM_API_TOKEN) {
         ctx.waitUntil(fetch(`${WAR_ROOM_API}/api/pilot-request`, {
           method: "POST",
