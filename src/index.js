@@ -748,65 +748,95 @@ async function createNotionLead(env, record, roi) {
     const volume      = VOLUME_MAP[record.volume] || record.volume || null;
 
     const roiNote = roi && roi.netMonthly > 0
-      ? `Estimated savings: $${Math.abs(roi.netMonthly).toLocaleString()}/mo net. ROI Month 1 positive.`
-      : null;
+      ? `Estimated savings: $${Math.abs(roi.netMonthly).toLocaleString()}/mo net.`
+      : "";
+    const notesText = [record.notes, roiNote, `Source: ${record.source || "primecoreintelligence.com"}`]
+      .filter(Boolean).join(" | ").slice(0, 2000);
 
-    const notesText = [
-      record.notes || null,
-      roiNote,
-      `Source: ${record.source || "primecoreintelligence.com"}`,
-    ].filter(Boolean).join(" | ");
-
-    // Create Leads & Deals page
-    const leadsPage = await notionCreatePage(env.NOTION_API_TOKEN, NOTION_LEADS_DB, {
-      "__title__": record.company || record.name,
-      "Contact Name":  record.name,
-      "Email":         { _email: record.email },
-      "Volume":        volume ? { _select: volume } : undefined,
-      "CCaaS Platform": ccaas ? { _select: ccaas } : undefined,
-      "Vertical":      vertical ? { _select: vertical } : undefined,
-      "Inquiry Type":  { _select: inquiryType },
-      "Priority":      { _select: priority },
-      "Language":      { _select: lang },
-      "Status":        { _select: "Not started" },
-      "Deal Value":    dealValue || undefined,
-      "Response Sent": "__NO__",
-      "Approval Pending": inquiryType === "Custom Pricing" || inquiryType === "Volume Deal" ? "__YES__" : "__NO__",
-      "Pilot ID":      record.id,
-      "Source Domain": record.source || "primecoreintelligence.com",
-      "Notes":         notesText,
-    });
-
-    // If volume deal or enterprise — also create Active Pilots page
-    if (record.volume === "20k-100k" || record.volume === "100k+") {
-      await notionCreatePage(env.NOTION_API_TOKEN, NOTION_PILOTS_DB, {
-        "__title__": record.company || record.name,
-        "Pilot ID":         record.id,
-        "Contact Name":     record.name,
-        "Contact Email":    { _email: record.email },
-        "CCaaS Platform":   ccaas ? { _select: ccaas } : undefined,
-        "Vertical":         vertical ? { _select: vertical } : undefined,
-        "Language":         { _select: lang },
-        "Plan":             { _select: "Growth" },
-        "Monthly Value":    dealValue || undefined,
-        "Week":             { _select: "Week 1 — Shadow Mode" },
-        "Shadow Mode Active": { _select: "Pending" },
-        "Cutover Approved": { _select: "Not Yet" },
-        "Health":           { _select: "On Track" },
-        "Next Action":      `Contact ${record.name} to confirm shadow mode setup. CCaaS: ${record.ccaas || "TBD"}`,
-      });
-    }
-
-    return {
-      pageId:       leadsPage.id,
-      pageUrl:      leadsPage.url,
-      inquiryType,
-      priority,
+    // Build properties directly — correct Notion API types for each field
+    const props = {
+      "Company": { title: [{ text: { content: String(record.company || record.name || "Unknown").slice(0, 200) } }] },
+      "Contact Name": { rich_text: [{ text: { content: String(record.name || "").slice(0, 200) } }] },
+      "Email": { email: record.email || null },
+      "Inquiry Type": { select: { name: inquiryType } },
+      "Priority": { select: { name: priority } },
+      "Language": { select: { name: lang } },
+      "Status": { status: { name: "Not started" } },
+      "Response Sent": { checkbox: false },
+      "Approval Pending": { checkbox: inquiryType === "Custom Pricing" || inquiryType === "Volume Deal" },
+      "Pilot ID": { rich_text: [{ text: { content: record.id || "" } }] },
+      "Source Domain": { rich_text: [{ text: { content: String(record.source || "primecoreintelligence.com").slice(0, 200) } }] },
+      "Notes": { rich_text: [{ text: { content: notesText } }] },
     };
 
+    // Only add select fields if we have a valid mapped value
+    if (volume)   props["Volume"]          = { select: { name: volume } };
+    if (ccaas)    props["CCaaS Platform"]  = { select: { name: ccaas } };
+    if (vertical) props["Vertical"]        = { select: { name: vertical } };
+    if (dealValue) props["Deal Value"]     = { number: dealValue };
+
+    const resp = await fetch("https://api.notion.com/v1/pages", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + env.NOTION_API_TOKEN,
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        parent: { database_id: NOTION_LEADS_DB },
+        properties: props,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      console.error("Notion leads page failed:", resp.status, errBody.slice(0, 300));
+      return null;
+    }
+
+    const page = await resp.json();
+
+    // For high-volume leads — also create Active Pilots entry
+    if (record.volume === "20k-100k" || record.volume === "100k+") {
+      const pilotProps = {
+        "Company": { title: [{ text: { content: String(record.company || record.name || "Unknown").slice(0, 200) } }] },
+        "Pilot ID": { rich_text: [{ text: { content: record.id || "" } }] },
+        "Contact Name": { rich_text: [{ text: { content: String(record.name || "").slice(0, 200) } }] },
+        "Contact Email": { email: record.email || null },
+        "Language": { select: { name: lang } },
+        "Plan": { select: { name: "Growth" } },
+        "Week": { select: { name: "Week 1 — Shadow Mode" } },
+        "Shadow Mode Active": { select: { name: "Pending" } },
+        "Cutover Approved": { select: { name: "Not Yet" } },
+        "Health": { select: { name: "On Track" } },
+        "Next Action": { rich_text: [{ text: { content: `Contact ${record.name} to confirm shadow mode setup. CCaaS: ${record.ccaas || "TBD"}` } }] },
+      };
+      if (ccaas)    pilotProps["CCaaS Platform"] = { select: { name: ccaas } };
+      if (vertical) pilotProps["Vertical"]       = { select: { name: vertical } };
+      if (dealValue) pilotProps["Monthly Value"] = { number: dealValue };
+
+      const pilotResp = await fetch("https://api.notion.com/v1/pages", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + env.NOTION_API_TOKEN,
+          "Notion-Version": "2022-06-28",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          parent: { database_id: NOTION_PILOTS_DB },
+          properties: pilotProps,
+        }),
+      });
+      if (!pilotResp.ok) {
+        const e = await pilotResp.text();
+        console.error("Notion pilots page failed:", pilotResp.status, e.slice(0, 200));
+      }
+    }
+
+    return { pageId: page.id, pageUrl: page.url, inquiryType, priority };
+
   } catch (err) {
-    // Never block the main response — Notion failure is non-critical
-    console.error("Notion createLead failed:", err.message);
+    console.error("Notion createLead exception:", err.message);
     return null;
   }
 }
@@ -1703,6 +1733,3 @@ sales@primecoreintelligence.com`,
       return json({ ok:true, callId, tenantId, state:callState }, 200, origin);
     }
 
-    return json({ ok:false, error:"Not found", path }, 404, origin);
-  },
-};
