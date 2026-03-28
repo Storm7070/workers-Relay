@@ -24,6 +24,7 @@ const LIMITS = {
   "/relay/call/event":         { max: 500,  window: 300  },
   "/relay/call/transcript":    { max: 2000, window: 300  },
   "/relay/call/end":           { max: 100,  window: 300  },
+  "/relay/call/respond":        { max: 1000, window: 300  },
   "/relay/call/outbound":      { max: 200,  window: 300  },
   "/relay/teleprompter/push":  { max: 1000, window: 300  },
   "default":                   { max: 60,   window: 300  },
@@ -41,13 +42,13 @@ const CCAAS_PLATFORMS = {
 
 // ── ROI benchmarks (matches marketing ROI calculator exactly) ─────────────
 const ROI_BENCHMARKS = {
-  logistics:  { fcr: 0.89, aht: 87,  costPerCall: 6.50, label: "Logistics / 3PL"    },
+  logistics:  { fcr: 0.89, aht: 87,  costPerCall: 4.50, label: "Logistics / 3PL"    },
   healthcare: { fcr: 0.82, aht: 120, costPerCall: 9.20, label: "Healthcare"          },
   financial:  { fcr: 0.79, aht: 105, costPerCall: 8.80, label: "Financial Services"  },
   retail:     { fcr: 0.87, aht: 72,  costPerCall: 5.40, label: "Retail / E-commerce" },
-  fleet:      { fcr: 0.85, aht: 95,  costPerCall: 7.10, label: "Fleet / Dispatch"    },
-  bpo:        { fcr: 0.83, aht: 102, costPerCall: 6.90, label: "BPO Operations"      },
-  default:    { fcr: 0.84, aht: 95,  costPerCall: 7.00, label: "General"             },
+  fleet:      { fcr: 0.85, aht: 95,  costPerCall: 4.80, label: "Fleet / Dispatch"    },
+  bpo:        { fcr: 0.83, aht: 102, costPerCall: 4.20, label: "BPO Operations"      },
+  default:    { fcr: 0.84, aht: 95,  costPerCall: 4.50, label: "General — LATAM"     },
 };
 
 const PLANS = [
@@ -902,6 +903,174 @@ async function sendSlackAlert(env, record, notionResult, roi) {
   }
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// VOICE SYNTHESIS LAYER
+// Standard: Cartesia ($0.04/call total — fits inside current pricing)
+// Premium:  ElevenLabs ($0.09/call — charged as Premium Voice add-on)
+// ══════════════════════════════════════════════════════════════════════════
+
+// Voice persona definitions per language
+const VOICE_PERSONAS = {
+  cartesia: {
+    es: { voice_id: "a0e99841-438c-4a64-b679-ae501e7d6091", language: "es" }, // Spanish neutral LATAM
+    en: { voice_id: "79a125e8-cd45-4c13-8a67-188112f4dd22", language: "en" }, // English professional
+    pt: { voice_id: "c8cf1063-8195-4a0e-b7c1-c9639d0c1a8b", language: "pt" }, // Portuguese Brazilian
+  },
+  elevenlabs: {
+    es: { voice_id: "pNInz6obpgDQGcFmaJgB", model: "eleven_turbo_v2_5" }, // Adam — neutral, professional
+    en: { voice_id: "ErXwobaYiN019PkySvjV", model: "eleven_turbo_v2_5" }, // Antoni
+    pt: { voice_id: "pNInz6obpgDQGcFmaJgB", model: "eleven_turbo_v2_5" }, // Adam (neutral)
+  },
+};
+
+// Cartesia voice synthesis — standard tier ($0.04/call)
+async function synthesizeCartesia(env, text, lang = "es") {
+  if (!env.CARTESIA_API_KEY) return null;
+  const persona = VOICE_PERSONAS.cartesia[lang] || VOICE_PERSONAS.cartesia.es;
+
+  try {
+    const resp = await fetch("https://api.cartesia.ai/tts/bytes", {
+      method: "POST",
+      headers: {
+        "X-API-Key": env.CARTESIA_API_KEY,
+        "Cartesia-Version": "2024-06-10",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model_id: "sonic-multilingual",
+        transcript: text,
+        voice: {
+          mode: "id",
+          id: persona.voice_id,
+        },
+        output_format: {
+          container: "raw",
+          encoding: "pcm_mulaw",
+          sample_rate: 8000, // telephony standard
+        },
+        language: persona.language,
+      }),
+    });
+
+    if (!resp.ok) {
+      console.error("Cartesia synthesis failed:", resp.status);
+      return null;
+    }
+
+    const audioBuffer = await resp.arrayBuffer();
+    return {
+      provider: "cartesia",
+      audio: audioBuffer,
+      format: "audio/mulaw",
+      sampleRate: 8000,
+      tier: "standard",
+    };
+  } catch (err) {
+    console.error("Cartesia error:", err.message);
+    return null;
+  }
+}
+
+// ElevenLabs voice synthesis — premium tier ($0.09/call)
+async function synthesizeElevenLabs(env, text, lang = "es") {
+  if (!env.ELEVENLABS_API_KEY) return null;
+  const persona = VOICE_PERSONAS.elevenlabs[lang] || VOICE_PERSONAS.elevenlabs.es;
+
+  try {
+    const resp = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${persona.voice_id}/stream`,
+      {
+        method: "POST",
+        headers: {
+          "xi-api-key": env.ELEVENLABS_API_KEY,
+          "Content-Type": "application/json",
+          "Accept": "audio/mpeg",
+        },
+        body: JSON.stringify({
+          text,
+          model_id: persona.model,
+          voice_settings: {
+            stability: 0.45,        // slightly variable = more natural
+            similarity_boost: 0.80,
+            style: 0.20,            // subtle expressiveness
+            use_speaker_boost: true,
+          },
+          output_format: "ulaw_8000", // telephony standard
+        }),
+      }
+    );
+
+    if (!resp.ok) {
+      console.error("ElevenLabs synthesis failed:", resp.status);
+      return null;
+    }
+
+    const audioBuffer = await resp.arrayBuffer();
+    return {
+      provider: "elevenlabs",
+      audio: audioBuffer,
+      format: "audio/mulaw",
+      sampleRate: 8000,
+      tier: "premium",
+    };
+  } catch (err) {
+    console.error("ElevenLabs error:", err.message);
+    return null;
+  }
+}
+
+// Main voice router — picks provider based on tenant voice_tier
+async function synthesizeVoice(env, text, lang = "es", voiceTier = "standard") {
+  if (voiceTier === "premium" && env.ELEVENLABS_API_KEY) {
+    const result = await synthesizeElevenLabs(env, text, lang);
+    if (result) return result;
+    // Fallback to Cartesia if ElevenLabs fails
+    console.error("ElevenLabs failed — falling back to Cartesia");
+  }
+  return synthesizeCartesia(env, text, lang);
+}
+
+// Generate Mode 1 AI response for a call intent
+async function generateCallResponse(env, intent, context, lang = "es") {
+  if (!env.ANTHROPIC_API_KEY) return null;
+
+  const SYSTEM = {
+    es: `Eres un agente de contact center IA para PrimeCore Intelligence. Respondes en español latinoamericano natural y conversacional. REGLAS: frases cortas, contracciones, nada de lenguaje corporativo. Nunca digas "de acuerdo", "por supuesto", "con gusto". Suenas como un agente humano eficiente y cálido. Máximo 2 oraciones por respuesta. Solo lo que el agente diría en voz alta.`,
+    en: `You are an AI contact center agent for PrimeCore Intelligence. You respond in natural conversational English. RULES: short phrases, contractions, no corporate language. Never say "certainly", "of course", "absolutely". Sound like an efficient, warm human agent. Maximum 2 sentences. Only what the agent would say out loud.`,
+    pt: `Você é um agente de contact center IA para PrimeCore Intelligence. Você responde em português brasileiro natural e conversacional. REGRAS: frases curtas, contrações, nada de linguagem corporativa. Nunca diga "certamente", "com prazer", "absolutamente". Soe como um agente humano eficiente e caloroso. Máximo 2 frases. Apenas o que o agente diria em voz alta.`,
+  };
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001", // fastest + cheapest for real-time calls
+        max_tokens: 150,
+        system: SYSTEM[lang] || SYSTEM.es,
+        messages: [{
+          role: "user",
+          content: `Intención del llamante: ${intent}
+Contexto: ${context || "ninguno"}
+Responde como agente de voz en ${lang === "es" ? "español" : lang === "pt" ? "portugués" : "inglés"}.`,
+        }],
+      }),
+    });
+
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.content?.[0]?.text?.trim() || null;
+  } catch (err) {
+    console.error("Call response generation failed:", err.message);
+    return null;
+  }
+}
+
 // ── Quote approval endpoint handler ──────────────────────────────────────
 async function handleQuoteApproval(request, env, origin) {
   const url    = new URL(request.url);
@@ -1448,6 +1617,67 @@ export default {
     }
 
     // ══════════════════════════════════════════════════════════════════════
+
+    // ══════════════════════════════════════════════════════════════════════
+    // CALL RESPOND — POST /relay/call/respond
+    // CCaaS sends caller's transcribed speech → relay returns voice audio
+    // Body: { callId, tenantId, intent, transcript, lang, context, voice_tier }
+    // Returns: audio/mulaw (8kHz) for direct playback via CCaaS
+    // ══════════════════════════════════════════════════════════════════════
+    if (request.method === "POST" && path === "/relay/call/respond") {
+      let body = {};
+      try { body = await request.json(); } catch { return json({ ok:false, error:"Invalid JSON" }, 400, origin); }
+
+      const callId    = sanitize(body.callId || "", 100);
+      const intent    = sanitize(body.intent || body.transcript || "", 500);
+      const lang      = sanitize(body.lang || "es", 5);
+      const context   = sanitize(body.context || "", 1000);
+      const voiceTier = sanitize(body.voice_tier || "standard", 20);
+
+      if (!intent) return json({ ok:false, error:"intent or transcript required" }, 422, origin);
+
+      // 1. Generate AI response text
+      const responseText = await generateCallResponse(env, intent, context, lang);
+      if (!responseText) {
+        return json({ ok:false, error:"AI response generation failed" }, 500, origin);
+      }
+
+      // 2. Synthesize voice
+      const voiceResult = await synthesizeVoice(env, responseText, lang, voiceTier);
+      if (!voiceResult) {
+        // Return text fallback if voice synthesis unavailable
+        return json({
+          ok: true,
+          callId,
+          response_text: responseText,
+          voice_available: false,
+          voice_tier: voiceTier,
+          provider: "none",
+        }, 200, origin);
+      }
+
+      // 3. Log the interaction
+      ctx.waitUntil(kvPut(env.RELAY_EVENTS, tenantId, "call_response", 
+        `${callId}_${Date.now()}`,
+        { callId, intent: intent.slice(0,100), responseText: responseText.slice(0,200), 
+          lang, voiceTier, provider: voiceResult.provider, ts: new Date().toISOString() },
+        { expirationTtl: 60*60*24 }
+      ).catch(() => {}));
+
+      // 4. Return audio bytes directly for CCaaS playback
+      return new Response(voiceResult.audio, {
+        status: 200,
+        headers: {
+          "Content-Type": voiceResult.format,
+          "X-Sample-Rate": String(voiceResult.sampleRate),
+          "X-Voice-Provider": voiceResult.provider,
+          "X-Voice-Tier": voiceResult.tier,
+          "X-Response-Text": encodeURIComponent(responseText.slice(0, 200)),
+          "Access-Control-Allow-Origin": origin || "*",
+        },
+      });
+    }
+
     // INBOUND CCaaS WEBHOOK — POST /relay/call/event
     // ══════════════════════════════════════════════════════════════════════
     if (request.method === "POST" && path === "/relay/call/event") {
