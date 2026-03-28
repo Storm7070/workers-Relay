@@ -1733,3 +1733,7 @@ sales@primecoreintelligence.com`,
       return json({ ok:true, callId, tenantId, state:callState }, 200, origin);
     }
 
+
+    return json({ ok:false, error:"Not found", path }, 404, origin);
+  },
+};
