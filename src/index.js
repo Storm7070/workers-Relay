@@ -418,64 +418,123 @@ function buildCustomQuote(record, roi) {
 
 // ── AI-written prospect reply ──────────────────────────────────────────────
 async function generateProspectReply(env, record, roi) {
-  if (!env.OPENAI_API_KEY && !env.WAR_ROOM_API_TOKEN) return null;
-
-  const volLabel = {
-    "under-5k": "under 5,000 calls/month",
-    "5k-20k":   "5,000–20,000 calls/month",
-    "20k-100k": "20,000–100,000 calls/month",
-    "100k+":    "over 100,000 calls/month"
-  }[record.volume] || record.volume;
-
-  const roiLine = roi && roi.netMonthly > 0
-    ? `At ${volLabel}, our model shows approximately $${Math.abs(roi.netMonthly).toLocaleString()}/month in net savings after plan cost — break-even typically comes before Month 2.`
-    : `At ${volLabel}, we'll run the full numbers together during the compatibility check.`;
+  if (!env.ANTHROPIC_API_KEY && !env.WAR_ROOM_API_TOKEN) return null;
 
   const lang = record.lang || "en";
-  const systemPrompt = lang === "es"
-    ? "Eres el fundador de PrimeCore Intelligence. Escribe un correo de respuesta personal, cálido pero profesional, en español. Máximo 5 oraciones. Sin plantillas. Sin frases corporativas. Directo al punto."
-    : lang === "pt"
-    ? "Você é o fundador da PrimeCore Intelligence. Escreva um email de resposta pessoal, caloroso mas profissional, em português. Máximo 5 frases. Sem templates. Sem frases corporativas. Direto ao ponto."
-    : "You are the founder of PrimeCore Intelligence. Write a personal, warm but professional reply email in English. Maximum 5 sentences. No templates. No corporate phrases. Direct.";
 
-  const userPrompt = `
-Prospect name: ${record.name}
-Company domain: ${record.company}
-Call volume: ${volLabel}
-Vertical: ${record.vertical || "not specified"}
-ROI line to include naturally: "${roiLine}"
+  const volLabel = {
+    "under-5k": { en: "under 5,000 calls/month", es: "menos de 5,000 llamadas/mes", pt: "menos de 5.000 chamadas/mês" },
+    "5k-20k":   { en: "5,000–20,000 calls/month", es: "entre 5,000 y 20,000 llamadas/mes", pt: "entre 5.000 e 20.000 chamadas/mês" },
+    "20k-100k": { en: "20,000–100,000 calls/month", es: "entre 20,000 y 100,000 llamadas/mes", pt: "entre 20.000 e 100.000 chamadas/mês" },
+    "100k+":    { en: "over 100,000 calls/month", es: "más de 100,000 llamadas/mes", pt: "mais de 100.000 chamadas/mês" },
+  };
+  const vol = (volLabel[record.volume] || {})[lang] || record.volume;
 
-Write the reply. Sign as "Lester, Founder — PrimeCore Intelligence".
-Do not include subject line. Just the email body.
-`.trim();
+  const roiNum = roi && roi.netMonthly > 0
+    ? `$${Math.abs(roi.netMonthly).toLocaleString()}`
+    : null;
+
+  const systemPrompts = {
+    en: `You are Lester Franco, founder of PrimeCore Intelligence. You are writing a personal email reply to someone who just requested a pilot.
+
+RULES — follow these exactly:
+- Write in fluent, natural English. Sound like a real person, not a company.
+- 3–4 short paragraphs. No bullet points. No numbered lists.
+- Never use these words: solution, leverage, synergy, seamless, excited, thrilled, honored, pleased to, I hope this email finds you.
+- Never start with "I hope" or "Thank you for reaching out" or "We are pleased".
+- Reference their company, their volume, and their vertical by name.
+- Mention shadow mode: the AI runs alongside their agents with zero side effects until they approve.
+- If ROI data is available, mention the monthly savings estimate naturally in one sentence — not as a headline.
+- End with one specific question or a clear next step. Not a generic close.
+- Sign as: Lester / Founder — PrimeCore Intelligence`,
+
+    es: `Eres Lester Franco, fundador de PrimeCore Intelligence. Estás escribiendo un correo personal en respuesta a alguien que acaba de solicitar un piloto.
+
+REGLAS — síguelas exactamente:
+- Escribe en español fluido y natural. Suena como una persona real, no como una empresa.
+- 3–4 párrafos cortos. Sin puntos. Sin listas numeradas.
+- Nunca uses estas palabras: solución integral, sinergia, robusto, de vanguardia, nos complace, estamos encantados.
+- Nunca empieces con "Espero que este correo te encuentre bien" ni "Gracias por comunicarte con nosotros".
+- Menciona su empresa, su volumen de llamadas y su vertical por nombre.
+- Menciona el modo sombra: la IA funciona junto a sus agentes sin efectos secundarios hasta que ellos aprueben.
+- Si hay datos de ROI disponibles, menciona el ahorro mensual estimado en una sola oración, de forma natural.
+- Termina con una pregunta específica o un próximo paso claro. No un cierre genérico.
+- Firma como: Lester / Fundador — PrimeCore Intelligence`,
+
+    pt: `Você é Lester Franco, fundador da PrimeCore Intelligence. Você está escrevendo um e-mail pessoal em resposta a alguém que acabou de solicitar um piloto.
+
+REGRAS — siga-as exatamente:
+- Escreva em português fluido e natural. Soe como uma pessoa real, não como uma empresa.
+- 3–4 parágrafos curtos. Sem marcadores. Sem listas numeradas.
+- Nunca use estas palavras: solução integrada, sinergia, robusto, de ponta, ficamos felizes em, é um prazer.
+- Nunca comece com "Espero que este e-mail te encontre bem" ou "Obrigado por entrar em contato conosco".
+- Mencione a empresa, o volume de chamadas e o vertical pelo nome.
+- Mencione o modo sombra: a IA funciona junto com os agentes sem efeitos colaterais até que eles aprovem.
+- Se houver dados de ROI disponíveis, mencione a estimativa de economia mensal em uma frase, de forma natural.
+- Termine com uma pergunta específica ou um próximo passo claro. Não um fechamento genérico.
+- Assine como: Lester / Fundador — PrimeCore Intelligence`,
+  };
+
+  const userPrompts = {
+    en: `Write the email reply to this prospect:
+
+Name: ${record.name}
+Company: ${record.company}
+Volume: ${vol}
+Vertical: ${record.vertical || "contact center operations"}
+CCaaS: ${record.ccaas || "not specified"}
+${roiNum ? `Estimated monthly savings: ${roiNum} net after plan cost` : ""}
+
+Just the email body — no subject line. Sign as Lester.`,
+
+    es: `Escribe el correo de respuesta para este prospecto:
+
+Nombre: ${record.name}
+Empresa: ${record.company}
+Volumen: ${vol}
+Vertical: ${record.vertical || "operaciones de centro de contacto"}
+CCaaS: ${record.ccaas || "no especificado"}
+${roiNum ? `Ahorro mensual estimado: ${roiNum} neto después del costo del plan` : ""}
+
+Solo el cuerpo del correo — sin asunto. Firma como Lester.`,
+
+    pt: `Escreva o e-mail de resposta para este prospect:
+
+Nome: ${record.name}
+Empresa: ${record.company}
+Volume: ${vol}
+Vertical: ${record.vertical || "operações de contact center"}
+CCaaS: ${record.ccaas || "não especificado"}
+${roiNum ? `Economia mensal estimada: ${roiNum} líquido após custo do plano` : ""}
+
+Apenas o corpo do e-mail — sem assunto. Assine como Lester.`,
+  };
+
+  const systemPrompt = systemPrompts[lang] || systemPrompts.en;
+  const userPrompt   = userPrompts[lang]   || userPrompts.en;
 
   try {
-    // Use war-room AI proxy if available
-    const endpoint = env.WAR_ROOM_API_TOKEN
-      ? "https://api.primecoreintelligence.com/api/ai/complete"
-      : "https://api.openai.com/v1/chat/completions";
+    // Use Anthropic Claude for human-quality multilingual responses
+    if (!env.ANTHROPIC_API_KEY) return null;
 
-    const headers = env.WAR_ROOM_API_TOKEN
-      ? { "content-type": "application/json", "authorization": `Bearer ${env.WAR_ROOM_API_TOKEN}` }
-      : { "content-type": "application/json", "authorization": `Bearer ${env.OPENAI_API_KEY}` };
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 600,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
 
-    const body = env.WAR_ROOM_API_TOKEN
-      ? JSON.stringify({ prompt: `${systemPrompt}\n\n${userPrompt}`, max_tokens: 300 })
-      : JSON.stringify({
-          model: "gpt-4.1-mini",
-          max_tokens: 300,
-          messages: [
-            { role: "system",  content: systemPrompt },
-            { role: "user",    content: userPrompt }
-          ]
-        });
-
-    const resp = await fetch(endpoint, { method: "POST", headers, body });
     if (!resp.ok) return null;
     const data = await resp.json();
-
-    // Handle both war-room and OpenAI response formats
-    return data.text || data.choices?.[0]?.message?.content || null;
+    return data.content?.[0]?.text?.trim() || null;
   } catch { return null; }
 }
 
