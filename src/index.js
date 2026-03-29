@@ -906,8 +906,8 @@ async function sendSlackAlert(env, record, notionResult, roi) {
 
 // ══════════════════════════════════════════════════════════════════════════
 // VOICE SYNTHESIS LAYER
-// Standard: Cartesia ($0.04/call total — fits inside current pricing)
-// Premium:  ElevenLabs ($0.09/call — charged as Premium Voice add-on)
+// Standard: PrimeCore Voice — $0.04/call
+// Premium:  PrimeCore Voice Pro — $0.09/call
 // ══════════════════════════════════════════════════════════════════════════
 
 // Voice persona definitions per language
@@ -1670,8 +1670,8 @@ export default {
         headers: {
           "Content-Type": voiceResult.format,
           "X-Sample-Rate": String(voiceResult.sampleRate),
-          "X-Voice-Provider": voiceResult.provider,
-          "X-Voice-Tier": voiceResult.tier,
+          "X-Voice-Provider": "primecore-voice",
+          "X-Voice-Tier": voiceResult.tier,  // primecore-voice or primecore-voice-pro
           "X-Response-Text": encodeURIComponent(responseText.slice(0, 200)),
           "Access-Control-Allow-Origin": origin || "*",
         },
