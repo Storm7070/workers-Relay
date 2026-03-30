@@ -540,6 +540,239 @@ Apenas o corpo do e-mail — sem assunto. Assine como Lester.`,
 }
 
 // ── Schedule follow-up sequence in KV ────────────────────────────────────
+
+// ══════════════════════════════════════════════════════════════════════════
+// INSTALLATION AGENT — Phase 1
+// Sends guided shadow mode setup emails after a pilot is approved.
+// Triggered for 20k-100k and 100k+ volume leads (same as Active Pilots).
+// Disable per-client: set installation_agent_disabled flag in KV.
+// Disable globally: set INSTALLATION_AGENT_ENABLED=false in CF secrets.
+// ══════════════════════════════════════════════════════════════════════════
+
+const INSTALL_STEPS = {
+  en: {
+    welcome: {
+      subject: (company) => `Your PrimeCore pilot is active — next steps for ${company}`,
+      body: (r) => `Hi ${r.name},
+
+Your 30-day pilot is confirmed. Shadow mode setup takes less than one hour and requires no changes to ${r.ccaas || 'your CCaaS'}.
+
+Here's what happens next:
+
+Step 1 — Your IT admin adds one webhook URL to your CCaaS admin panel (15 min)
+Step 2 — We verify the first call event arrives (automatic)
+Step 3 — You get war room access to watch calls in real time
+
+I'll send you the exact webhook configuration for ${r.ccaas || 'your platform'} in a separate email in the next few minutes.
+
+One question before I do: when does your IT admin have 30 minutes available this week?
+
+Lester
+PrimeCore Intelligence`,
+    },
+    webhook_config: {
+      subject: (company, ccaas) => `Webhook configuration for ${company} — ${ccaas || 'your CCaaS'}`,
+      body: (r, tenantId, token) => `Hi ${r.name},
+
+Here is your webhook configuration. Your IT admin adds this in the CCaaS admin panel under Integrations → Webhooks:
+
+URL: https://relay.primecoreintelligence.com/relay/call/event
+Method: POST
+Header 1: x-tenant-id: ${tenantId}
+Header 2: Authorization: Bearer ${token}
+Trigger: every inbound call event
+
+Once added, I'll receive the first call event automatically and confirm shadow mode is active. You don't need to do anything else.
+
+War room access (so you can watch calls in real time):
+https://warroom.primecoreintelligence.com
+
+Your tenant ID: ${tenantId}
+
+Let me know if your IT team has any questions — I respond same day.
+
+Lester`,
+    },
+    week2: {
+      subject: (company) => `${company} — Week 2 shadow mode check-in`,
+      body: (r) => `Hi ${r.name},
+
+Two weeks of shadow data are in. A few things worth reviewing in your war room dashboard before we talk:
+
+1. FCR prediction — the percentage of calls the AI would have resolved without an agent
+2. AHT comparison — actual agent time vs. AI simulation time per intent category  
+3. Top intent categories — where the AI performs strongest
+
+One specific question: are there any call types showing up in the dashboard that you'd expect the AI to struggle with? That helps us calibrate before the Week 4 evidence pack.
+
+Schedule 15 minutes whenever works: just reply to this email.
+
+Lester`,
+    },
+  },
+  es: {
+    welcome: {
+      subject: (company) => `Su piloto de PrimeCore está activo — próximos pasos para ${company}`,
+      body: (r) => `Hola ${r.name},
+
+Su piloto de 30 días está confirmado. La configuración del modo sombra toma menos de una hora y no requiere ningún cambio en ${r.ccaas || 'su CCaaS'}.
+
+Esto es lo que sigue:
+
+Paso 1 — Su administrador de TI agrega una URL de webhook en el panel de administración de su CCaaS (15 min)
+Paso 2 — Verificamos que el primer evento de llamada llegue (automático)
+Paso 3 — Recibe acceso a la sala de guerra para ver las llamadas en tiempo real
+
+Le enviaré la configuración exacta del webhook para ${r.ccaas || 'su plataforma'} en un correo separado en los próximos minutos.
+
+Una pregunta antes de enviarlo: ¿cuándo tiene disponible su administrador de TI 30 minutos esta semana?
+
+Lester
+PrimeCore Intelligence`,
+    },
+    webhook_config: {
+      subject: (company, ccaas) => `Configuración del webhook para ${company} — ${ccaas || 'su CCaaS'}`,
+      body: (r, tenantId, token) => `Hola ${r.name},
+
+Aquí está la configuración del webhook. Su administrador de TI la agrega en el panel de administración del CCaaS bajo Integraciones → Webhooks:
+
+URL: https://relay.primecoreintelligence.com/relay/call/event
+Método: POST
+Header 1: x-tenant-id: ${tenantId}
+Header 2: Authorization: Bearer ${token}
+Disparador: cada evento de llamada entrante
+
+Una vez agregado, recibiré el primer evento de llamada automáticamente y confirmaré que el modo sombra está activo. No necesita hacer nada más.
+
+Acceso a la sala de guerra (para ver las llamadas en tiempo real):
+https://warroom.primecoreintelligence.com
+
+Su ID de tenant: ${tenantId}
+
+Avíseme si su equipo de TI tiene alguna pregunta — respondo el mismo día.
+
+Lester`,
+    },
+    week2: {
+      subject: (company) => `${company} — Seguimiento Semana 2 del modo sombra`,
+      body: (r) => `Hola ${r.name},
+
+Ya tenemos dos semanas de datos en modo sombra. Vale la pena revisar algunas cosas en su panel de sala de guerra antes de conversar:
+
+1. Predicción de FCR — el porcentaje de llamadas que la IA habría resuelto sin un agente
+2. Comparación de AHT — tiempo real del agente vs. tiempo de simulación de IA por categoría de intención
+3. Categorías de intención principales — donde la IA funciona mejor
+
+Una pregunta específica: ¿hay algún tipo de llamada en el panel que esperaría que la IA tuviera dificultades para manejar? Eso nos ayuda a calibrar antes del paquete de evidencias de la Semana 4.
+
+Coordine 15 minutos cuando le convenga: responda a este correo.
+
+Lester`,
+    },
+  },
+  pt: {
+    welcome: {
+      subject: (company) => `Seu piloto PrimeCore está ativo — próximos passos para ${company}`,
+      body: (r) => `Olá ${r.name},
+
+Seu piloto de 30 dias está confirmado. A configuração do modo sombra leva menos de uma hora e não requer nenhuma mudança no ${r.ccaas || 'seu CCaaS'}.
+
+Veja o que acontece a seguir:
+
+Passo 1 — Seu administrador de TI adiciona uma URL de webhook no painel de administração do CCaaS (15 min)
+Passo 2 — Verificamos que o primeiro evento de chamada chegou (automático)
+Passo 3 — Você recebe acesso à sala de guerra para ver as chamadas em tempo real
+
+Enviarei a configuração exata do webhook para ${r.ccaas || 'sua plataforma'} em um e-mail separado nos próximos minutos.
+
+Uma pergunta antes de enviar: quando seu administrador de TI tem 30 minutos disponíveis esta semana?
+
+Lester
+PrimeCore Intelligence`,
+    },
+    webhook_config: {
+      subject: (company, ccaas) => `Configuração do webhook para ${company} — ${ccaas || 'seu CCaaS'}`,
+      body: (r, tenantId, token) => `Olá ${r.name},
+
+Aqui está a configuração do webhook. Seu administrador de TI a adiciona no painel de administração do CCaaS em Integrações → Webhooks:
+
+URL: https://relay.primecoreintelligence.com/relay/call/event
+Método: POST
+Header 1: x-tenant-id: ${tenantId}
+Header 2: Authorization: Bearer ${token}
+Gatilho: cada evento de chamada recebida
+
+Assim que adicionado, receberei o primeiro evento de chamada automaticamente e confirmarei que o modo sombra está ativo. Você não precisa fazer mais nada.
+
+Acesso à sala de guerra (para ver as chamadas em tempo real):
+https://warroom.primecoreintelligence.com
+
+Seu ID de tenant: ${tenantId}
+
+Avise-me se sua equipe de TI tiver alguma dúvida — respondo no mesmo dia.
+
+Lester`,
+    },
+    week2: {
+      subject: (company) => `${company} — Acompanhamento Semana 2 do modo sombra`,
+      body: (r) => `Olá ${r.name},
+
+Duas semanas de dados em modo sombra já estão disponíveis. Vale revisar algumas coisas no seu painel da sala de guerra antes de conversar:
+
+1. Previsão de FCR — a porcentagem de chamadas que a IA teria resolvido sem um agente
+2. Comparação de AHT — tempo real do agente vs. tempo de simulação de IA por categoria de intenção
+3. Principais categorias de intenção — onde a IA performa melhor
+
+Uma pergunta específica: há algum tipo de chamada no painel que você esperaria que a IA tivesse dificuldade em tratar? Isso nos ajuda a calibrar antes do pacote de evidências da Semana 4.
+
+Agende 15 minutos quando for conveniente: responda a este e-mail.
+
+Lester`,
+    },
+  },
+};
+
+async function scheduleInstallationAgent(env, record) {
+  // Global disable switch
+  if (env.INSTALLATION_AGENT_ENABLED === 'false') return;
+  if (!env.RELAY_STATE || !env.RESEND_API_KEY) return;
+
+  const lang = (record.lang || 'es').toLowerCase().slice(0, 2);
+  const t = INSTALL_STEPS[lang] || INSTALL_STEPS.es;
+  const tenantId = record.id || crypto.randomUUID();
+  const token = env.RELAY_AUTH_TOKEN || 'pending';
+  const now = Date.now();
+
+  // Store installation sequence in KV
+  const installKey = `install:${record.id}`;
+  await env.RELAY_STATE.put(installKey, JSON.stringify({
+    record, tenantId, lang,
+    steps: [
+      { type: 'welcome',        daysOut: 0,  sent: false },
+      { type: 'webhook_config', daysOut: 0,  sent: false }, // same day, 10 min later
+      { type: 'week2',          daysOut: 14, sent: false },
+    ],
+    createdAt: now,
+    agentEnabled: true,
+  }), { expirationTtl: 60 * 60 * 24 * 45 }); // 45 day TTL
+
+  // Send welcome email immediately
+  const welcome = t.welcome;
+  await sendEmail(env, {
+    to: record.email,
+    subject: welcome.subject(record.company || record.name),
+    body: welcome.body(record),
+  });
+
+  // Schedule webhook config email (fire after 10 minutes via KV flag)
+  const webhookKey = `install:${record.id}:webhook_config`;
+  await env.RELAY_STATE.put(webhookKey, JSON.stringify({
+    record, tenantId, token, lang,
+    sendAt: now + (10 * 60 * 1000), // 10 minutes
+    sent: false,
+  }), { expirationTtl: 60 * 60 * 24 });
+}
+
 async function scheduleFollowUps(env, record, roi) {
   if (!env.RELAY_STATE) return;
   const now = Date.now();
@@ -1905,6 +2138,11 @@ sales@primecoreintelligence.com`,
 
       // 4. Schedule follow-up sequence
       ctx.waitUntil(scheduleFollowUps(env, record, record.roi).catch(() => {}));
+
+      // 4b. Installation Agent — guided shadow mode setup (high-volume pilots only)
+      if (record.volume === '20k-100k' || record.volume === '100k+') {
+        ctx.waitUntil(scheduleInstallationAgent(env, record).catch(() => {}));
+      }
 
       // 5. Create Notion lead page + fire Slack alert (non-blocking)
       ctx.waitUntil((async () => {
