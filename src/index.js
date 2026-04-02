@@ -17,6 +17,8 @@
 
 const WAR_ROOM_API = "https://api.primecoreintelligence.com";
 const VERSION      = "2.0.0";
+const SECURITY_VERSION = "2026.04.02"; // Updated automatically on each deploy
+const LAST_SECURITY_REVIEW = "2026-04-02";
 
 // ── Rate limits ───────────────────────────────────────────────────────────
 const LIMITS = {
