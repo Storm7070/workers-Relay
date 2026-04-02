@@ -14,6 +14,7 @@
  */
 
 "use strict";
+import { runLeadOrchestrator, sweepStaleLeads } from "./leadOrchestrator.js";
 
 const WAR_ROOM_API = "https://api.primecoreintelligence.com";
 const VERSION      = "2.0.0";
@@ -1515,6 +1516,12 @@ export class TeleprompterSession {
 // ═════════════════════════════════════════════════════════════════════════
 // MAIN FETCH HANDLER
 // ═════════════════════════════════════════════════════════════════════════
+// ── Sales Swarm sweep (internal cron or manual trigger) ──────────────────
+async function handleLeadSweep(env) {
+  const results = await sweepStaleLeads(env).catch(() => []);
+  return { ok: true, swept: results?.length || 0, ts: new Date().toISOString() };
+}
+
 export default {
   // ── Cron: daily follow-up sequence processor (10:00 UTC) ─────────────
   async scheduled(event, env, ctx) {
@@ -2162,6 +2169,22 @@ sales@primecoreintelligence.com`,
           body: JSON.stringify(record),
         }).catch(() => {}));
       }
+
+      // 5. Sales Swarm — trigger lead orchestrator asynchronously (Qualifier → Closer)
+      ctx.waitUntil(
+        runLeadOrchestrator(id, {
+          name:     record.name,
+          email:    record.email,
+          company:  record.company,
+          phone:    record.phone || "",
+          ccaas:    record.ccaas || "",
+          volume:   record.volume || "",
+          vertical: record.vertical || "",
+          notes:    record.notes || "",
+          lang:     record.lang || "en",
+          source:   "pilot_form",
+        }, env).catch(() => { /* swarm failure is non-fatal */ })
+      );
 
       return json({ ok:true, id, roi:record.roi || null, message:"Pilot request received. We will contact you within 1 business day." }, 201, origin);
     }
