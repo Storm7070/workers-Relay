@@ -70,14 +70,15 @@ function nowIso() { return new Date().toISOString(); }
 function nowMs()  { return Date.now(); }
 
 // ── ROI benchmarks (canonical — matches war room and marketing exactly) ───
+// CANONICAL — must match marketing site ROI calculator exactly (public/index.html line 5252)
 const ROI_BENCHMARKS = {
-  logistics:  { fcr: 0.89, aht: 87,  costPerCall: 6.50 },
-  healthcare: { fcr: 0.82, aht: 120, costPerCall: 9.20 },
-  financial:  { fcr: 0.79, aht: 105, costPerCall: 8.80 },
-  retail:     { fcr: 0.87, aht: 72,  costPerCall: 5.40 },
-  fleet:      { fcr: 0.85, aht: 95,  costPerCall: 7.10 },
-  bpo:        { fcr: 0.83, aht: 102, costPerCall: 6.90 },
-  default:    { fcr: 0.84, aht: 95,  costPerCall: 6.50 },
+  logistics:  { fcr: 0.89, aht: 87,  costPerCall: 4.50 },  // Logistics / 3PL
+  healthcare: { fcr: 0.82, aht: 120, costPerCall: 9.20 },  // Healthcare
+  financial:  { fcr: 0.79, aht: 105, costPerCall: 8.80 },  // Financial Services
+  retail:     { fcr: 0.87, aht: 72,  costPerCall: 4.00 },  // Retail / E-commerce
+  fleet:      { fcr: 0.85, aht: 95,  costPerCall: 4.80 },  // Fleet / Dispatch
+  bpo:        { fcr: 0.83, aht: 102, costPerCall: 4.20 },  // BPO Operations
+  default:    { fcr: 0.84, aht: 95,  costPerCall: 4.50 },  // General — LATAM
 };
 
 const PLANS = [
@@ -203,7 +204,7 @@ function runPainMapper(lead) {
     },
     bpo: {
       primaryPain:    "Margin compression from Tier 1 volume that delivers no added value while consuming agent time billable to clients at fixed SLAs",
-      pcSolves:       "Mode 1 converts Tier 1 calls from agent cost ($6.90/call) to AI cost ($0.04/call) — improving client margins and SLA compliance",
+      pcSolves:       "Mode 1 converts Tier 1 calls from agent cost ($4.20/call) to AI cost ($0.04/call) — improving client margins and SLA compliance",
       outOfScope:     "Client-specific QA scoring, custom agent coaching programs",
     },
   };
