@@ -11,7 +11,7 @@
  *   roi_built    → Closer runs (Day 1/3/7 email sequence)
  *   active       → Objection Handler watches for reply signals
  *   disqualified → Score <6, logged, no further action (founder can override)
- *   escalated    → Requires founder review before proceeding
+ *   escalated    → Requires operations review before proceeding
  *
  * Designed to run from:
  *   1. POST /relay/leads/orchestrate    — called by pilot form handler after Notion write
@@ -25,10 +25,10 @@
  * GUARDRAILS (non-negotiable):
  *   - Never claims to be human
  *   - Never commits to capabilities not yet built
- *   - Never approves custom pricing >$12,000/mo (escalates to founder)
- *   - Never signs contracts (escalates to founder)
+ *   - Never approves custom pricing >$12,000/mo (escalates to operations)
+ *   - Never signs contracts (escalates to operations)
  *   - Sends after 30-minute delay to avoid feeling automated
- *   - All email drafts stored in KV for founder review before send
+ *   - All email drafts stored in KV for operations review before send
  */
 
 "use strict";
@@ -42,7 +42,7 @@ const LEAD_STATES = {
   ROI_BUILT:     "roi_built",
   ACTIVE:        "active",          // Closer sequence running
   OBJECTION:     "objection",       // Objection detected, handling
-  ESCALATED:     "escalated",       // Needs founder review
+  ESCALATED:     "escalated",       // Needs operations review
   CLOSED_WON:    "closed_won",
   CLOSED_LOST:   "closed_lost",
 };
@@ -151,7 +151,7 @@ function runQualifier(lead) {
     signals.push("Self-initiated pilot request — strong intent");
   }
 
-  // Escalate immediately: very large volume always worth founder review
+  // Escalate immediately: very large volume always worth operations review
   const escalate = vol >= 100000;
   const state = score >= 6 ? LEAD_STATES.QUALIFIED : LEAD_STATES.DISQUALIFIED;
 
@@ -159,7 +159,7 @@ function runQualifier(lead) {
     score,
     state: escalate ? LEAD_STATES.ESCALATED : state,
     signals,
-    escalateReason: escalate ? "Volume ≥100k — founder review required before proceeding" : null,
+    escalateReason: escalate ? "Volume ≥100k — operations review required before proceeding" : null,
     qualifiedAt: nowIso(),
   };
 }
@@ -227,7 +227,7 @@ function runPainMapper(lead) {
     ccaas:          ccaas,
     mappedAt:       nowIso(),
     honestNote:     pain.outOfScope
-      ? `Honesty flag: ${pain.outOfScope} are out of scope for Mode 1. If prospect's primary pain is in these areas, flag for founder review.`
+      ? `Honesty flag: ${pain.outOfScope} are out of scope for Mode 1. If prospect's primary pain is in these areas, flag for operations review.`
       : null,
   };
 
@@ -312,8 +312,8 @@ Based on ${vol_label(lead.volume)} at $${roi.bench.costPerCall.toFixed(2)}/call,
 
 One question: is ${lead.ccaas || "your CCaaS"} admin-accessible to your IT team, or does it go through a vendor support ticket? That determines how long setup takes.
 
-Lester
-Founder — PrimeCore Intelligence`,
+PrimeCore Intelligence
+Enterprise Operations`,
       },
       day3: {
         subject: `Re: ${lead.company} pilot — quick follow-up`,
@@ -325,7 +325,7 @@ If the timing isn't right this week, that's fine. The numbers don't change: ${Ma
 
 What's the best way to get 20 minutes with whoever handles your CCaaS integrations?
 
-Lester`,
+PrimeCore Intelligence`,
       },
       day7: {
         subject: `${lead.company} — last follow-up before I close this out`,
@@ -337,7 +337,7 @@ If the numbers were off, or you found a better solution, I'd genuinely like to k
 
 If it's a timing issue: the pilot structure doesn't change — 30 days, shadow mode, cancel before Month 2 if the data doesn't convince you. The only thing that changes is when we start.
 
-Lester`,
+PrimeCore Intelligence`,
       },
     },
     es: {
@@ -353,8 +353,8 @@ Con un volumen de ${vol_label_es(lead.volume)} a $${roi.bench.costPerCall.toFixe
 
 Una pregunta: ¿el administrador de ${lead.ccaas || "su CCaaS"} es accesible para su equipo de TI, o requiere un ticket de soporte del proveedor?
 
-Lester
-Fundador — PrimeCore Intelligence`,
+PrimeCore Intelligence
+Operaciones Empresariales`,
       },
       day3: {
         subject: `Re: Piloto ${lead.company} — breve seguimiento`,
@@ -366,7 +366,7 @@ Si el momento no es el adecuado esta semana, no hay problema. Los números no ca
 
 ¿Cuál es la mejor forma de coordinar 20 minutos con quien maneja las integraciones de su CCaaS?
 
-Lester`,
+PrimeCore Intelligence`,
       },
       day7: {
         subject: `${lead.company} — último seguimiento`,
@@ -378,7 +378,7 @@ Si los números no eran correctos o encontró una mejor solución, me gustaría 
 
 Si es una cuestión de tiempo: la estructura del piloto no cambia — 30 días, modo sombra, cancelación antes del Mes 2 si los datos no lo convencen. Lo único que cambia es cuándo empezamos.
 
-Lester`,
+PrimeCore Intelligence`,
       },
     },
     pt: {
@@ -394,8 +394,8 @@ Com um volume de ${vol_label_pt(lead.volume)} a $${roi.bench.costPerCall.toFixed
 
 Uma pergunta: o administrador do ${lead.ccaas || "seu CCaaS"} é acessível à sua equipe de TI, ou precisa de um chamado de suporte ao fornecedor?
 
-Lester
-Fundador — PrimeCore Intelligence`,
+PrimeCore Intelligence
+Operaciones Empresariales`,
       },
       day3: {
         subject: `Re: Piloto ${lead.company} — acompanhamento rápido`,
@@ -407,7 +407,7 @@ Se o momento não for ideal esta semana, sem problema. Os números não mudam: $
 
 Qual é a melhor forma de agendar 20 minutos com quem cuida das integrações do seu CCaaS?
 
-Lester`,
+PrimeCore Intelligence`,
       },
       day7: {
         subject: `${lead.company} — último acompanhamento`,
@@ -419,7 +419,7 @@ Se os números não estavam certos ou você encontrou uma solução melhor, gost
 
 Se é uma questão de tempo: a estrutura do piloto não muda — 30 dias, modo sombra, cancelamento antes do Mês 2 se os dados não te convencerem. A única coisa que muda é quando começamos.
 
-Lester`,
+PrimeCore Intelligence`,
       },
     },
   };
@@ -434,8 +434,8 @@ Lester`,
   return {
     sequence:  sendSchedule,
     builtAt:   nowIso(),
-    from:      "lester@primecoreintelligence.com",
-    replyTo:   "lester@primecoreintelligence.com",
+    from:      "ops@primecoreintelligence.com",
+    replyTo:   "ops@primecoreintelligence.com",
   };
 }
 
@@ -477,7 +477,7 @@ function runObjectionHandler(replyText, lead, roi) {
       category,
       reason:    category === "legal"
         ? "Legal/compliance question — founder + legal review required"
-        : "Prospect requests a call — founder takes it directly",
+        : "Prospect requests a call — operations team handles directly",
       draftReply: null,
     };
   }
@@ -598,7 +598,7 @@ export async function runLeadOrchestrator(leadId, lead, env) {
     const roi    = await kvGet(kv, leadKey(leadId, "roi"))   || runROIBuilder(lead, pain);
     const emails = buildCloserSequence(lead, roi, pain);
 
-    // Store email drafts — do NOT auto-send yet (founder reviews Day 1 email)
+    // Store email drafts — do NOT auto-send yet (operations reviews Day 1 email)
     await kvPut(kv, leadKey(leadId, "emails"), {
       sequence:    emails.sequence,
       status:      "pending_review",
@@ -694,7 +694,7 @@ PrimeCore Sales Swarm`;
       method: "POST",
       headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "swarm@primecoreintelligence.com",
+        from: "ops@primecoreintelligence.com",
         to:   [env.NOTIFY_EMAIL],
         subject,
         text: body,
@@ -710,10 +710,10 @@ async function notifyFounderEscalation(kv, leadId, lead, reason, env) {
       method: "POST",
       headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        from:    "swarm@primecoreintelligence.com",
+        from:    "ops@primecoreintelligence.com",
         to:      [env.NOTIFY_EMAIL],
-        subject: `[PrimeCore ESCALATION] ${lead?.company || leadId} — founder review required`,
-        text:    `Escalation required for lead ${leadId}.\n\nCompany: ${lead?.company}\nContact: ${lead?.name} (${lead?.email})\n\nReason: ${reason}\n\nTake over this thread directly.\n\n---\nPrimeCore Sales Swarm`,
+        subject: `[PrimeCore ESCALATION] ${lead?.company || leadId} — operations review required`,
+        text:    `Escalation required for lead ${leadId}.\n\nCompany: ${lead?.company}\nContact: ${lead?.name} (${lead?.email})\n\nReason: ${reason}\n\nOperations team will take over this thread directly.\n\n---\nPrimeCore Sales Swarm`,
       }),
     });
   } catch { /* non-fatal */ }
