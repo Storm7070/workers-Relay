@@ -1140,7 +1140,7 @@ async function sendSlackAlert(env, record, notionResult, roi) {
 // ══════════════════════════════════════════════════════════════════════════
 // CALL SCORING ENGINE — Week 3-A
 // Real-time agent performance scoring on transcript chunks.
-// Rubric-based fallback (no API key needed). AI-enhanced when OPENAI_API_KEY set.
+// Rubric-based fallback (no API key needed). AI-enhanced when ANTHROPIC_API_KEY set.
 // ══════════════════════════════════════════════════════════════════════════
 
 const SCORING_RUBRIC = {
@@ -1171,9 +1171,9 @@ function rubricScore(chunks) {
   return { score, dimensions, totalChunks: chunks.length, agentChunks: agentChunks.length };
 }
 
-// AI-enhanced coaching hints (async, non-blocking — only runs when OPENAI_API_KEY present)
+// AI-enhanced coaching hints (async, non-blocking — only runs when ANTHROPIC_API_KEY present)
 async function aiCoachingHints(env, callId, chunks, scoreResult) {
-  if (!env.OPENAI_API_KEY) return null;
+  if (!env.ANTHROPIC_API_KEY) return null;
   try {
     const agentTexts = chunks
       .filter(c => c.speaker === "agent")
@@ -1182,21 +1182,18 @@ async function aiCoachingHints(env, callId, chunks, scoreResult) {
       .join("\n");
     if (!agentTexts.trim()) return null;
 
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
-        "content-type":  "application/json",
-        "authorization": `Bearer ${env.OPENAI_API_KEY}`,
+        "content-type":     "application/json",
+        "x-api-key":        env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        max_tokens: 120,
-        temperature: 0.3,
+        model:      "claude-haiku-4-20250514",
+        max_tokens: 150,
+        system: "You are a senior operations advisor at PrimeCore Intelligence reviewing a live CCaaS sales call. Analyze the last few agent turns and give ONE concise coaching tip (max 2 sentences) to improve the call. Be direct, actionable, no fluff. Focus on: qualification, empathy, objection handling, or CTA.",
         messages: [
-          {
-            role: "system",
-            content: "You are a senior operations advisor at PrimeCore Intelligence reviewing a live CCaaS sales call. Analyze the last few agent turns and give ONE concise coaching tip (max 2 sentences) to improve the call. Be direct, actionable, no fluff. Focus on: qualification, empathy, objection handling, or CTA.",
-          },
           {
             role: "user",
             content: `Agent turns:\n${agentTexts}\n\nCurrent rubric score: ${scoreResult.score}/100. Weakest dimension: ${
@@ -1208,7 +1205,7 @@ async function aiCoachingHints(env, callId, chunks, scoreResult) {
     });
     if (!resp.ok) return null;
     const data = await resp.json();
-    return data.choices?.[0]?.message?.content?.trim() || null;
+    return data.content?.[0]?.text?.trim() || null;
   } catch {
     return null;
   }
@@ -2781,6 +2778,42 @@ ops@primecoreintelligence.com`,
           `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Denied</title><style>body{font-family:system-ui;background:#0a1628;color:#ef4444;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px}</style></head><body><div style="font-size:48px">❌</div><h2>Denied</h2><p style="color:#7a93b8">${approval.action}</p><p style="color:#4a6080;font-size:12px">PrimeCore Intelligence · ${approval.decidedAt}</p></body></html>`,
           { status: 200, headers: { "content-type": "text/html" } }
         );
+      }
+    }
+
+    // ── GET /relay/audit/log — Audit trail (auth required) ───────────────────────
+    if (request.method === "GET" && path === "/relay/audit/log") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.RELAY_STATE) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      try {
+        // Support optional ?tenant= and ?limit= query params
+        const qTenant = url.searchParams.get("tenant") || tenantId;
+        const limit   = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
+        // List audit keys (sorted by key = timestamp prefix)
+        const keys  = await env.RELAY_STATE.list({ prefix: `tenant:${qTenant}:audit:`, limit });
+        const entries = [];
+        for (const key of (keys.keys || [])) {
+          try {
+            const raw = await env.RELAY_STATE.get(key.name);
+            if (raw) entries.push(JSON.parse(raw));
+          } catch { /* skip */ }
+        }
+        // Also fetch public tenant audit entries
+        if (qTenant !== "public") {
+          const pubKeys = await env.RELAY_STATE.list({ prefix: "tenant:public:audit:", limit: Math.ceil(limit / 2) });
+          for (const key of (pubKeys.keys || [])) {
+            try {
+              const raw = await env.RELAY_STATE.get(key.name);
+              if (raw) entries.push(JSON.parse(raw));
+            } catch { /* skip */ }
+          }
+        }
+        // Sort by ts descending
+        entries.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+        return json({ ok: true, count: entries.length, entries: entries.slice(0, limit) }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
       }
     }
 
