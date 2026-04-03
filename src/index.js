@@ -439,7 +439,7 @@ async function generateProspectReply(env, record, roi) {
     : null;
 
   const systemPrompts = {
-    en: `You are Lester Franco, founder of PrimeCore Intelligence. You are writing a personal email reply to someone who just requested a pilot.
+    en: `You are a senior operations advisor at PrimeCore Intelligence writing a professional email reply to someone who just requested a pilot.
 
 RULES — follow these exactly:
 - Write in fluent, natural English. Sound like a real person, not a company.
@@ -450,9 +450,9 @@ RULES — follow these exactly:
 - Mention shadow mode: the AI runs alongside their agents with zero side effects until they approve.
 - If ROI data is available, mention the monthly savings estimate naturally in one sentence — not as a headline.
 - End with one specific question or a clear next step. Not a generic close.
-- Sign as: Lester / Founder — PrimeCore Intelligence`,
+- Sign as: PrimeCore Intelligence — Enterprise Operations`,
 
-    es: `Eres Lester Franco, fundador de PrimeCore Intelligence. Estás escribiendo un correo personal en respuesta a alguien que acaba de solicitar un piloto.
+    es: `Eres un asesor senior de operaciones en PrimeCore Intelligence escribiendo una respuesta profesional a alguien que acaba de solicitar un piloto.
 
 REGLAS — síguelas exactamente:
 - Escribe en español fluido y natural. Suena como una persona real, no como una empresa.
@@ -463,9 +463,9 @@ REGLAS — síguelas exactamente:
 - Menciona el modo sombra: la IA funciona junto a sus agentes sin efectos secundarios hasta que ellos aprueben.
 - Si hay datos de ROI disponibles, menciona el ahorro mensual estimado en una sola oración, de forma natural.
 - Termina con una pregunta específica o un próximo paso claro. No un cierre genérico.
-- Firma como: Lester / Fundador — PrimeCore Intelligence`,
+- Firma como: PrimeCore Intelligence — Operaciones Empresariales`,
 
-    pt: `Você é Lester Franco, fundador da PrimeCore Intelligence. Você está escrevendo um e-mail pessoal em resposta a alguém que acabou de solicitar um piloto.
+    pt: `Você é um consultor sênior de operações da PrimeCore Intelligence escrevendo uma resposta profissional a alguém que acabou de solicitar um piloto.
 
 REGRAS — siga-as exatamente:
 - Escreva em português fluido e natural. Soe como uma pessoa real, não como uma empresa.
@@ -476,7 +476,7 @@ REGRAS — siga-as exatamente:
 - Mencione o modo sombra: a IA funciona junto com os agentes sem efeitos colaterais até que eles aprovem.
 - Se houver dados de ROI disponíveis, mencione a estimativa de economia mensal em uma frase, de forma natural.
 - Termine com uma pergunta específica ou um próximo passo claro. Não um fechamento genérico.
-- Assine como: Lester / Fundador — PrimeCore Intelligence`,
+- Assine como: PrimeCore Intelligence — Operações Empresariais`,
   };
 
   const userPrompts = {
@@ -489,7 +489,7 @@ Vertical: ${record.vertical || "contact center operations"}
 CCaaS: ${record.ccaas || "not specified"}
 ${roiNum ? `Estimated monthly savings: ${roiNum} net after plan cost` : ""}
 
-Just the email body — no subject line. Sign as Lester.`,
+Just the email body — no subject line. Sign as: PrimeCore Intelligence — Enterprise Operations`,
 
     es: `Escribe el correo de respuesta para este prospecto:
 
@@ -500,7 +500,7 @@ Vertical: ${record.vertical || "operaciones de centro de contacto"}
 CCaaS: ${record.ccaas || "no especificado"}
 ${roiNum ? `Ahorro mensual estimado: ${roiNum} neto después del costo del plan` : ""}
 
-Solo el cuerpo del correo — sin asunto. Firma como Lester.`,
+Solo el cuerpo del correo — sin asunto. Firma como: PrimeCore Intelligence — Operaciones Empresariales`,
 
     pt: `Escreva o e-mail de resposta para este prospect:
 
@@ -511,7 +511,7 @@ Vertical: ${record.vertical || "operações de contact center"}
 CCaaS: ${record.ccaas || "não especificado"}
 ${roiNum ? `Economia mensal estimada: ${roiNum} líquido após custo do plano` : ""}
 
-Apenas o corpo do e-mail — sem assunto. Assine como Lester.`,
+Apenas o corpo do e-mail — sem assunto. Assine como: PrimeCore Intelligence — Operações Empresariais`,
   };
 
   const systemPrompt = systemPrompts[lang] || systemPrompts.en;
@@ -570,8 +570,7 @@ I'll send you the exact webhook configuration for ${r.ccaas || 'your platform'} 
 
 One question before I do: when does your IT admin have 30 minutes available this week?
 
-Lester
-PrimeCore Intelligence`,
+PrimeCore Intelligence — Enterprise Operations`,
     },
     webhook_config: {
       subject: (company, ccaas) => `Webhook configuration for ${company} — ${ccaas || 'your CCaaS'}`,
@@ -594,7 +593,7 @@ Your tenant ID: ${tenantId}
 
 Let me know if your IT team has any questions — I respond same day.
 
-Lester`,
+PrimeCore Intelligence — Enterprise Operations`,
     },
     week2: {
       subject: (company) => `${company} — Week 2 shadow mode check-in`,
@@ -610,7 +609,7 @@ One specific question: are there any call types showing up in the dashboard that
 
 Schedule 15 minutes whenever works: just reply to this email.
 
-Lester`,
+PrimeCore Intelligence — Enterprise Operations`,
     },
   },
   es: {
@@ -630,8 +629,7 @@ Le enviaré la configuración exacta del webhook para ${r.ccaas || 'su plataform
 
 Una pregunta antes de enviarlo: ¿cuándo tiene disponible su administrador de TI 30 minutos esta semana?
 
-Lester
-PrimeCore Intelligence`,
+PrimeCore Intelligence — Enterprise Operations`,
     },
     webhook_config: {
       subject: (company, ccaas) => `Configuración del webhook para ${company} — ${ccaas || 'su CCaaS'}`,
@@ -654,7 +652,7 @@ Su ID de tenant: ${tenantId}
 
 Avíseme si su equipo de TI tiene alguna pregunta — respondo el mismo día.
 
-Lester`,
+PrimeCore Intelligence — Enterprise Operations`,
     },
     week2: {
       subject: (company) => `${company} — Seguimiento Semana 2 del modo sombra`,
@@ -670,7 +668,7 @@ Una pregunta específica: ¿hay algún tipo de llamada en el panel que esperarí
 
 Coordine 15 minutos cuando le convenga: responda a este correo.
 
-Lester`,
+PrimeCore Intelligence — Enterprise Operations`,
     },
   },
   pt: {
@@ -690,8 +688,7 @@ Enviarei a configuração exata do webhook para ${r.ccaas || 'sua plataforma'} e
 
 Uma pergunta antes de enviar: quando seu administrador de TI tem 30 minutos disponíveis esta semana?
 
-Lester
-PrimeCore Intelligence`,
+PrimeCore Intelligence — Enterprise Operations`,
     },
     webhook_config: {
       subject: (company, ccaas) => `Configuração do webhook para ${company} — ${ccaas || 'seu CCaaS'}`,
@@ -714,7 +711,7 @@ Seu ID de tenant: ${tenantId}
 
 Avise-me se sua equipe de TI tiver alguma dúvida — respondo no mesmo dia.
 
-Lester`,
+PrimeCore Intelligence — Enterprise Operations`,
     },
     week2: {
       subject: (company) => `${company} — Acompanhamento Semana 2 do modo sombra`,
@@ -730,7 +727,7 @@ Uma pergunta específica: há algum tipo de chamada no painel que você esperari
 
 Agende 15 minutos quando for conveniente: responda a este e-mail.
 
-Lester`,
+PrimeCore Intelligence — Enterprise Operations`,
     },
   },
 };
@@ -1352,8 +1349,7 @@ To move forward, reply to this email or click below to start your pilot directly
 
 Start your pilot: https://pilot.primecoreintelligence.com
 
-Lester
-Founder — PrimeCore Intelligence`,
+PrimeCore Intelligence — Enterprise Operations`,
 
     es: `Hola ${record.name},
 
@@ -1371,8 +1367,7 @@ Para avanzar, responda este correo o haga clic abajo para iniciar su piloto dire
 
 Iniciar piloto: https://pilot.primecoreintelligence.com
 
-Lester
-Fundador — PrimeCore Intelligence`,
+PrimeCore Intelligence — Operaciones Empresariales`,
 
     pt: `Olá ${record.name},
 
@@ -1390,8 +1385,7 @@ Para avançar, responda este email ou clique abaixo para iniciar seu piloto dire
 
 Iniciar piloto: https://pilot.primecoreintelligence.com
 
-Lester
-Fundador — PrimeCore Intelligence`,
+PrimeCore Intelligence — Operaciones Empresariales`,
   };
 
   await sendEmail(env, {
@@ -1573,19 +1567,19 @@ export default {
 
             const bodies = {
               roi_followup: {
-                en: `Hi ${record.name},\n\nFollowing up on your PrimeCore Intelligence request from a few days ago.\n\nBased on your volume (${record.volume}), our model estimates $${record.roi ? Math.abs(record.roi.netMonthly).toLocaleString() : "8,000–24,000"}/month in net savings after plan cost.\n\nIf that number is interesting, reply here and I'll set up a 20-minute compatibility check — no commitment, just numbers.\n\nLester\nFounder — PrimeCore Intelligence`,
-                es: `Hola ${record.name},\n\nSiguiendo con su solicitud de PrimeCore Intelligence de hace unos días.\n\nBasado en su volumen (${record.volume}), nuestro modelo estima $${record.roi ? Math.abs(record.roi.netMonthly).toLocaleString() : "8,000–24,000"}/mes en ahorros netos.\n\nSi ese número le interesa, responda aquí y coordino una verificación de compatibilidad de 20 minutos.\n\nLester\nFundador — PrimeCore Intelligence`,
-                pt: `Olá ${record.name},\n\nSeguindo com sua solicitação da PrimeCore Intelligence de alguns dias atrás.\n\nCom base no seu volume (${record.volume}), nosso modelo estima $${record.roi ? Math.abs(record.roi.netMonthly).toLocaleString() : "8.000–24.000"}/mês em economias líquidas.\n\nSe esse número for interessante, responda aqui e agendo uma verificação de compatibilidade de 20 minutos.\n\nLester\nFundador — PrimeCore Intelligence`,
+                en: `Hi ${record.name},\n\nFollowing up on your PrimeCore Intelligence request from a few days ago.\n\nBased on your volume (${record.volume}), our model estimates $${record.roi ? Math.abs(record.roi.netMonthly).toLocaleString() : "8,000–24,000"}/month in net savings after plan cost.\n\nIf that number is interesting, reply here and I'll set up a 20-minute compatibility check — no commitment, just numbers.\n\nPrimeCore Intelligence — Enterprise Operations`,
+                es: `Hola ${record.name},\n\nSiguiendo con su solicitud de PrimeCore Intelligence de hace unos días.\n\nBasado en su volumen (${record.volume}), nuestro modelo estima $${record.roi ? Math.abs(record.roi.netMonthly).toLocaleString() : "8,000–24,000"}/mes en ahorros netos.\n\nSi ese número le interesa, responda aquí y coordino una verificación de compatibilidad de 20 minutos.\n\nPrimeCore Intelligence — Operaciones Empresariales`,
+                pt: `Olá ${record.name},\n\nSeguindo com sua solicitação da PrimeCore Intelligence de alguns dias atrás.\n\nCom base no seu volume (${record.volume}), nosso modelo estima $${record.roi ? Math.abs(record.roi.netMonthly).toLocaleString() : "8.000–24.000"}/mês em economias líquidas.\n\nSe esse número for interessante, responda aqui e agendo uma verificação de compatibilidade de 20 minutos.\n\nPrimeCore Intelligence — Operaciones Empresariales`,
               },
               case_study: {
-                en: `Hi ${record.name},\n\nSharing a quick data point that might be relevant to your evaluation:\n\nA logistics operator with a similar profile to yours — 22,000 calls/month, 12 agents — reduced their per-call cost from $6.50 to $0.04 on Tier-1 volume. AHT dropped from 5:40 to under 2 minutes. Six weeks, no SLA breaches.\n\nHappy to walk you through exactly how that was configured if you want a 20-minute call.\n\nLester\nFounder — PrimeCore Intelligence`,
-                es: `Hola ${record.name},\n\nComparto un dato que podría ser relevante para su evaluación:\n\nUn operador logístico con un perfil similar al suyo — 22,000 llamadas/mes, 12 agentes — redujo su costo por llamada de $6.50 a $0.04 en volumen Nivel 1. El AHT bajó de 5:40 a menos de 2 minutos. Seis semanas, sin incumplimientos de SLA.\n\nCon gusto le explico exactamente cómo se configuró si quiere una llamada de 20 minutos.\n\nLester\nFundador — PrimeCore Intelligence`,
-                pt: `Olá ${record.name},\n\nCompartilhando um dado que pode ser relevante para sua avaliação:\n\nUm operador logístico com um perfil semelhante ao seu — 22.000 chamadas/mês, 12 agentes — reduziu o custo por chamada de $6,50 para $0,04 no volume Nível 1. O AHT caiu de 5:40 para menos de 2 minutos. Seis semanas, sem violações de SLA.\n\nPosso explicar exatamente como foi configurado se quiser uma chamada de 20 minutos.\n\nLester\nFundador — PrimeCore Intelligence`,
+                en: `Hi ${record.name},\n\nSharing a quick data point that might be relevant to your evaluation:\n\nA logistics operator with a similar profile to yours — 22,000 calls/month, 12 agents — reduced their per-call cost from $6.50 to $0.04 on Tier-1 volume. AHT dropped from 5:40 to under 2 minutes. Six weeks, no SLA breaches.\n\nHappy to walk you through exactly how that was configured if you want a 20-minute call.\n\nPrimeCore Intelligence — Enterprise Operations`,
+                es: `Hola ${record.name},\n\nComparto un dato que podría ser relevante para su evaluación:\n\nUn operador logístico con un perfil similar al suyo — 22,000 llamadas/mes, 12 agentes — redujo su costo por llamada de $6.50 a $0.04 en volumen Nivel 1. El AHT bajó de 5:40 a menos de 2 minutos. Seis semanas, sin incumplimientos de SLA.\n\nCon gusto le explico exactamente cómo se configuró si quiere una llamada de 20 minutos.\n\nPrimeCore Intelligence — Operaciones Empresariales`,
+                pt: `Olá ${record.name},\n\nCompartilhando um dado que pode ser relevante para sua avaliação:\n\nUm operador logístico com um perfil semelhante ao seu — 22.000 chamadas/mês, 12 agentes — reduziu o custo por chamada de $6,50 para $0,04 no volume Nível 1. O AHT caiu de 5:40 para menos de 2 minutos. Seis semanas, sem violações de SLA.\n\nPosso explicar exatamente como foi configurado se quiser uma chamada de 20 minutos.\n\nPrimeCore Intelligence — Operaciones Empresariales`,
               },
               closing_loop: {
-                en: `Hi ${record.name},\n\nClosing the loop on your PrimeCore pilot request.\n\nIf the timing isn't right, no problem at all — I'll stop following up after this. If you want to revisit when the time is right, the pilot link is always open: https://pilot.primecoreintelligence.com\n\nEither way, good luck with the operation.\n\nLester\nFounder — PrimeCore Intelligence`,
-                es: `Hola ${record.name},\n\nCerrando el ciclo sobre su solicitud de piloto PrimeCore.\n\nSi el momento no es el correcto, no hay problema — dejaré de hacer seguimiento después de este mensaje. Si quiere retomarlo cuando sea el momento adecuado, el enlace del piloto siempre está disponible: https://pilot.primecoreintelligence.com\n\nDe cualquier forma, mucho éxito con la operación.\n\nLester\nFundador — PrimeCore Intelligence`,
-                pt: `Olá ${record.name},\n\nEncerrando o ciclo sobre sua solicitação de piloto PrimeCore.\n\nSe o momento não é o certo, sem problema — vou parar de fazer follow-up após esta mensagem. Se quiser retomar quando o momento for certo, o link do piloto está sempre disponível: https://pilot.primecoreintelligence.com\n\nDe qualquer forma, boa sorte com a operação.\n\nLester\nFundador — PrimeCore Intelligence`,
+                en: `Hi ${record.name},\n\nClosing the loop on your PrimeCore pilot request.\n\nIf the timing isn't right, no problem at all — I'll stop following up after this. If you want to revisit when the time is right, the pilot link is always open: https://pilot.primecoreintelligence.com\n\nEither way, good luck with the operation.\n\nPrimeCore Intelligence — Enterprise Operations`,
+                es: `Hola ${record.name},\n\nCerrando el ciclo sobre su solicitud de piloto PrimeCore.\n\nSi el momento no es el correcto, no hay problema — dejaré de hacer seguimiento después de este mensaje. Si quiere retomarlo cuando sea el momento adecuado, el enlace del piloto siempre está disponible: https://pilot.primecoreintelligence.com\n\nDe cualquier forma, mucho éxito con la operación.\n\nPrimeCore Intelligence — Operaciones Empresariales`,
+                pt: `Olá ${record.name},\n\nEncerrando o ciclo sobre sua solicitação de piloto PrimeCore.\n\nSe o momento não é o certo, sem problema — vou parar de fazer follow-up após esta mensagem. Se quiser retomar quando o momento for certo, o link do piloto está sempre disponível: https://pilot.primecoreintelligence.com\n\nDe qualquer forma, boa sorte com a operação.\n\nPrimeCore Intelligence — Operaciones Empresariales`,
               },
             };
 
@@ -2130,9 +2124,8 @@ Thank you for requesting a PrimeCore Intelligence pilot.
 
 I'll personally review your setup and reach out today with next steps tailored to your operation.
 
-Lester
-Founder — PrimeCore Intelligence
-sales@primecoreintelligence.com`,
+PrimeCore Intelligence — Enterprise Operations
+ops@primecoreintelligence.com`,
             replyTo: "sales@primecoreintelligence.com",
           });
         } catch(e) { /* fail silently */ }
@@ -2248,6 +2241,327 @@ sales@primecoreintelligence.com`,
       return json({ ok:true, callId, tenantId, state:callState }, 200, origin);
     }
 
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PADDLE WEBHOOK — Finance Tower live revenue
+    // POST /relay/paddle/webhook
+    //
+    // Events handled:
+    //   subscription.activated   → increment active MRR
+    //   subscription.cancelled   → decrement MRR
+    //   subscription.updated     → update MRR tier
+    //   transaction.completed    → record one-time payment
+    //   transaction.payment_failed → fire SEV2 alert
+    //
+    // Paddle-Signature header is verified (HMAC-SHA256) if PADDLE_WEBHOOK_SECRET is set.
+    // ══════════════════════════════════════════════════════════════════════
+    if (request.method === "POST" && path === "/relay/paddle/webhook") {
+      const rawBody = await request.text();
+
+      // Signature verification (skip if secret not configured — log warning)
+      if (env.PADDLE_WEBHOOK_SECRET) {
+        const sigHeader = request.headers.get("paddle-signature") || "";
+        // Paddle format: ts=<timestamp>;h1=<hmac>
+        const parts = Object.fromEntries(sigHeader.split(";").map(p => p.split("=").map((v, i) => i === 0 ? v : p.slice(p.indexOf("=")+1))));
+        const ts    = parts["ts"] || "";
+        const h1    = parts["h1"] || "";
+        if (ts && h1) {
+          const encoder = new TextEncoder();
+          const key = await crypto.subtle.importKey(
+            "raw", encoder.encode(env.PADDLE_WEBHOOK_SECRET),
+            { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+          );
+          const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(`${ts}:${rawBody}`));
+          const expected = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
+          if (expected !== h1) {
+            return json({ ok: false, error: "Invalid Paddle signature" }, 401, origin);
+          }
+        }
+      } else {
+        console.warn("[Paddle] PADDLE_WEBHOOK_SECRET not set — skipping signature verification");
+      }
+
+      let event = {};
+      try { event = JSON.parse(rawBody); } catch {
+        return json({ ok: false, error: "Invalid JSON" }, 400, origin);
+      }
+
+      const eventType    = event.event_type || event.notification_type || "";
+      const eventData    = event.data || {};
+      const subscId      = eventData.id || eventData.subscription_id || "";
+      const customerId   = eventData.customer_id || "";
+      const items        = eventData.items || [];
+      const priceId      = items[0]?.price?.id || "";
+      const unitPrice    = items[0]?.price?.unit_price?.amount || 0;
+      const currency     = items[0]?.price?.unit_price?.currency_code || "USD";
+      // Paddle amounts are in lowest denomination (cents)
+      const amountUsd    = currency === "USD" ? Math.round(unitPrice / 100) : unitPrice;
+      const now          = new Date().toISOString();
+
+      // Map Paddle price ID to plan name (configure in Cloudflare secrets as JSON)
+      // PADDLE_PRICE_MAP = '{"pri_xxx":"Starter","pri_yyy":"Professional","pri_zzz":"Enterprise"}'
+      let planName = "Unknown";
+      try {
+        const priceMap = JSON.parse(env.PADDLE_PRICE_MAP || "{}");
+        planName = priceMap[priceId] || planName;
+      } catch { /* use Unknown */ }
+
+      if (!env.RELAY_STATE) {
+        return json({ ok: false, error: "RELAY_STATE KV not configured" }, 503, origin);
+      }
+
+      // ── Read current finance state ──────────────────────────────────────
+      const finKey  = "finance:mrr:live";
+      const rawFin  = await env.RELAY_STATE.get(finKey);
+      const finance = rawFin ? JSON.parse(rawFin) : {
+        mrr_cents:       0,
+        active_subs:     0,
+        churned_subs:    0,
+        transactions:    [],
+        last_updated:    null,
+      };
+
+      // ── Process event ────────────────────────────────────────────────────
+      let action = "unknown";
+
+      if (eventType === "subscription.activated" || eventType === "subscription.created") {
+        finance.mrr_cents   += amountUsd * 100;
+        finance.active_subs += 1;
+        action = "subscription_activated";
+        finance.transactions.unshift({ id: subscId, type: "sub_start", amount: amountUsd, plan: planName, customer: customerId, ts: now });
+
+      } else if (eventType === "subscription.cancelled") {
+        finance.mrr_cents   = Math.max(0, finance.mrr_cents - amountUsd * 100);
+        finance.active_subs = Math.max(0, finance.active_subs - 1);
+        finance.churned_subs += 1;
+        action = "subscription_cancelled";
+        finance.transactions.unshift({ id: subscId, type: "churn", amount: -amountUsd, plan: planName, customer: customerId, ts: now });
+
+        // Fire SEV2 alert on churn
+        if (env.SLACK_WEBHOOK_URL || env.SLACK_WEBHOOK_ALERTS) {
+          const slackPayload = {
+            text: `🟡 Subscription Cancelled — ${planName} ($${amountUsd}/mo)`,
+            blocks: [{
+              type: "section",
+              text: { type: "mrkdwn", text: `*Churn Event:* ${planName} plan cancelled\n*Amount lost:* $${amountUsd}/mo\n*Customer:* ${customerId}\n*Time:* ${now}` },
+            }],
+          };
+          ctx.waitUntil(fetch(env.SLACK_WEBHOOK_ALERTS || env.SLACK_WEBHOOK_URL, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(slackPayload),
+          }).catch(() => {}));
+        }
+
+      } else if (eventType === "subscription.updated") {
+        // Price change — delta update
+        const prevAmount = eventData.previous_billing_period?.unit_price?.amount || 0;
+        const delta = amountUsd * 100 - prevAmount;
+        finance.mrr_cents += delta;
+        action = "subscription_updated";
+        finance.transactions.unshift({ id: subscId, type: "upgrade", amount: amountUsd, plan: planName, customer: customerId, ts: now });
+
+      } else if (eventType === "transaction.completed") {
+        const txAmount = eventData.details?.totals?.grand_total || unitPrice;
+        const txAmountUsd = currency === "USD" ? Math.round(txAmount / 100) : txAmount;
+        action = "transaction_completed";
+        finance.transactions.unshift({ id: eventData.id || subscId, type: "payment", amount: txAmountUsd, plan: planName, customer: customerId, ts: now });
+
+      } else if (eventType === "transaction.payment_failed") {
+        action = "payment_failed";
+        finance.transactions.unshift({ id: eventData.id || subscId, type: "failed", amount: amountUsd, plan: planName, customer: customerId, ts: now });
+
+        // SEV2 alert — payment failure
+        if (env.SLACK_WEBHOOK_URL || env.SLACK_WEBHOOK_ALERTS) {
+          const slackPayload = {
+            text: `🔴 Payment Failed — ${planName} ($${amountUsd})`,
+            blocks: [{
+              type: "section",
+              text: { type: "mrkdwn", text: `*Payment Failed:* ${planName} plan\n*Amount:* $${amountUsd}\n*Customer:* ${customerId}\n*Time:* ${now}` },
+            }],
+          };
+          ctx.waitUntil(fetch(env.SLACK_WEBHOOK_ALERTS || env.SLACK_WEBHOOK_URL, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(slackPayload),
+          }).catch(() => {}));
+        }
+      }
+
+      // Keep last 100 transactions
+      finance.transactions = finance.transactions.slice(0, 100);
+      finance.last_updated = now;
+      finance.mrr          = Math.round(finance.mrr_cents / 100);
+
+      // Persist
+      await env.RELAY_STATE.put(finKey, JSON.stringify(finance), { expirationTtl: 60 * 60 * 24 * 90 });
+
+      // Broadcast SSE to Command Station if event type was meaningful
+      if (action !== "unknown") {
+        ctx.waitUntil(fetch("https://primecore-command-production.up.railway.app/api/warroom/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.RELAY_AUTH_TOKEN || ""}` },
+        }).catch(() => {}));
+      }
+
+      return json({ ok: true, event_type: eventType, action, mrr: finance.mrr, active_subs: finance.active_subs }, 200, origin);
+    }
+
+    // ── GET /relay/finance — Command Station polls this for live revenue ──────
+    if (request.method === "GET" && path === "/relay/finance") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.RELAY_STATE) return json({ ok: false, error: "RELAY_STATE not configured" }, 503, origin);
+      const raw = await env.RELAY_STATE.get("finance:mrr:live");
+      const finance = raw ? JSON.parse(raw) : { mrr: 0, active_subs: 0, churned_subs: 0, transactions: [], last_updated: null };
+      return json({ ok: true, ...finance }, 200, origin);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // APPROVAL QUEUE — Founder-gated action management
+    // POST /relay/approvals          — create approval request
+    // GET  /relay/approvals          — list pending approvals
+    // GET  /relay/approvals/:id/approve — one-tap approve (from Slack button)
+    // GET  /relay/approvals/:id/deny    — one-tap deny
+    // ══════════════════════════════════════════════════════════════════════
+    if (path === "/relay/approvals" || path.startsWith("/relay/approvals/")) {
+
+      // ── Create approval request ──────────────────────────────────────────
+      if (request.method === "POST" && path === "/relay/approvals") {
+        const auth = requireAuth(request, env);
+        if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+        if (!env.RELAY_STATE) return json({ ok: false, error: "RELAY_STATE not configured" }, 503, origin);
+
+        let body = {};
+        try { body = await request.json(); } catch {
+          return json({ ok: false, error: "Invalid JSON" }, 400, origin);
+        }
+
+        const approvalId  = `appr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const expiresInMin = body.expiresInMin || 60;
+        const approval = {
+          id:           approvalId,
+          action:       sanitize(body.action || "Unknown action", 200),
+          risk:         ["high", "medium", "low"].includes(body.risk) ? body.risk : "medium",
+          context:      sanitize(body.context || "", 500),
+          factory:      sanitize(body.factory || "System", 50),
+          status:       "pending",
+          createdAt:    new Date().toISOString(),
+          expiresAt:    new Date(Date.now() + expiresInMin * 60 * 1000).toISOString(),
+          decidedAt:    null,
+          decision:     null,
+        };
+
+        const approveUrl = `https://relay.primecoreintelligence.com/relay/approvals/${approvalId}/approve?token=${env.RELAY_AUTH_TOKEN}`;
+        const denyUrl    = `https://relay.primecoreintelligence.com/relay/approvals/${approvalId}/deny?token=${env.RELAY_AUTH_TOKEN}`;
+        approval.approveUrl = approveUrl;
+        approval.denyUrl    = denyUrl;
+
+        // Persist to KV
+        const kvKey = `approval:${approvalId}`;
+        await env.RELAY_STATE.put(kvKey, JSON.stringify(approval), { expirationTtl: 60 * 60 * 24 });
+
+        // Track in pending list
+        const pendingRaw = await env.RELAY_STATE.get("approvals:pending");
+        const pending    = pendingRaw ? JSON.parse(pendingRaw) : [];
+        pending.unshift(approvalId);
+        await env.RELAY_STATE.put("approvals:pending", JSON.stringify(pending.slice(0, 50)),
+          { expirationTtl: 60 * 60 * 24 });
+
+        // Fire Slack notification → #pci-approvals
+        if (env.SLACK_WEBHOOK_URL || env.SLACK_WEBHOOK_APPROVALS) {
+          const riskEmoji = { high: "🔴", medium: "🟡", low: "🟢" }[approval.risk] || "🟡";
+          const slackPayload = {
+            text: `${riskEmoji} Approval Required: ${approval.action}`,
+            blocks: [
+              { type: "header", text: { type: "plain_text", text: `${riskEmoji} Operations Review Required` } },
+              { type: "section", text: { type: "mrkdwn",
+                text: `*Action:* ${approval.action}\n*Factory:* ${approval.factory}\n*Risk:* ${approval.risk.toUpperCase()}\n*ID:* \`${approvalId}\`` } },
+              approval.context ? { type: "section", text: { type: "mrkdwn", text: `*Context:*\n${approval.context}` } } : null,
+              { type: "actions", elements: [
+                { type: "button", text: { type: "plain_text", text: "✅  APPROVE" }, url: approveUrl, style: "primary" },
+                { type: "button", text: { type: "plain_text", text: "❌  DENY" },    url: denyUrl,    style: "danger" },
+              ]},
+              { type: "context", elements: [{ type: "mrkdwn",
+                text: `PrimeCore Intelligence · Policy Engine · Expires ${new Date(Date.now() + expiresInMin * 60000).toUTCString()}` }] },
+            ].filter(Boolean),
+          };
+          ctx.waitUntil(fetch(env.SLACK_WEBHOOK_APPROVALS || env.SLACK_WEBHOOK_URL, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(slackPayload),
+          }).catch(() => {}));
+        }
+
+        return json({ ok: true, approvalId, approveUrl, denyUrl, approval }, 201, origin);
+      }
+
+      // ── List pending approvals ───────────────────────────────────────────
+      if (request.method === "GET" && path === "/relay/approvals") {
+        const auth = requireAuth(request, env);
+        if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+        if (!env.RELAY_STATE) return json({ ok: false, error: "RELAY_STATE not configured" }, 503, origin);
+
+        const pendingRaw = await env.RELAY_STATE.get("approvals:pending");
+        const pendingIds = pendingRaw ? JSON.parse(pendingRaw) : [];
+
+        const approvals = await Promise.all(
+          pendingIds.slice(0, 20).map(async id => {
+            const raw = await env.RELAY_STATE.get(`approval:${id}`);
+            return raw ? JSON.parse(raw) : null;
+          })
+        );
+
+        const active = approvals
+          .filter(Boolean)
+          .filter(a => a.status === "pending" && new Date(a.expiresAt) > new Date())
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+        return json({ ok: true, count: active.length, approvals: active }, 200, origin);
+      }
+
+      // ── One-tap Approve ──────────────────────────────────────────────────
+      if (request.method === "GET" && path.endsWith("/approve")) {
+        const token = url.searchParams.get("token") || "";
+        if (!token || token !== (env.RELAY_AUTH_TOKEN || "")) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+        const approvalId = path.split("/relay/approvals/")[1]?.split("/")[0];
+        if (!approvalId || !env.RELAY_STATE) return new Response("Not found", { status: 404 });
+
+        const raw = await env.RELAY_STATE.get(`approval:${approvalId}`);
+        if (!raw) return new Response("Approval not found", { status: 404 });
+        const approval = JSON.parse(raw);
+        approval.status    = "approved";
+        approval.decision  = "approved";
+        approval.decidedAt = new Date().toISOString();
+        await env.RELAY_STATE.put(`approval:${approvalId}`, JSON.stringify(approval),
+          { expirationTtl: 60 * 60 * 24 * 7 });
+
+        return new Response(
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Approved</title><style>body{font-family:system-ui;background:#0a1628;color:#00c9a7;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px}</style></head><body><div style="font-size:48px">✅</div><h2>Approved</h2><p style="color:#7a93b8">${approval.action}</p><p style="color:#4a6080;font-size:12px">PrimeCore Intelligence · ${approval.decidedAt}</p></body></html>`,
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+
+      // ── One-tap Deny ─────────────────────────────────────────────────────
+      if (request.method === "GET" && path.endsWith("/deny")) {
+        const token = url.searchParams.get("token") || "";
+        if (!token || token !== (env.RELAY_AUTH_TOKEN || "")) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+        const approvalId = path.split("/relay/approvals/")[1]?.split("/")[0];
+        if (!approvalId || !env.RELAY_STATE) return new Response("Not found", { status: 404 });
+
+        const raw = await env.RELAY_STATE.get(`approval:${approvalId}`);
+        if (!raw) return new Response("Approval not found", { status: 404 });
+        const approval = JSON.parse(raw);
+        approval.status    = "denied";
+        approval.decision  = "denied";
+        approval.decidedAt = new Date().toISOString();
+        await env.RELAY_STATE.put(`approval:${approvalId}`, JSON.stringify(approval),
+          { expirationTtl: 60 * 60 * 24 * 7 });
+
+        return new Response(
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Denied</title><style>body{font-family:system-ui;background:#0a1628;color:#ef4444;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px}</style></head><body><div style="font-size:48px">❌</div><h2>Denied</h2><p style="color:#7a93b8">${approval.action}</p><p style="color:#4a6080;font-size:12px">PrimeCore Intelligence · ${approval.decidedAt}</p></body></html>`,
+          { status: 200, headers: { "content-type": "text/html" } }
+        );
+      }
+    }
 
     return json({ ok:false, error:"Not found", path }, 404, origin);
   },
