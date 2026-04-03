@@ -1609,6 +1609,80 @@ export default {
         } catch(e) { /* skip broken entries */ }
       }
     } catch(e) { /* fail silently */ }
+
+    // ── Notion two-way sync: read lead status changes → write to KV ──────────────
+    ctx.waitUntil((async () => {
+      if (!env.NOTION_API_TOKEN || !env.RELAY_STATE) return;
+      try {
+        // Query leads modified in last 25h (buffer for clock drift)
+        const since = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+        const queryResp = await fetch(
+          `https://api.notion.com/v1/databases/${NOTION_LEADS_DB}/query`,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": "Bearer " + env.NOTION_API_TOKEN,
+              "Notion-Version": "2022-06-28",
+              "Content-Type":   "application/json",
+            },
+            body: JSON.stringify({
+              filter: {
+                timestamp: "last_edited_time",
+                last_edited_time: { on_or_after: since },
+              },
+              page_size: 100,
+            }),
+          }
+        );
+        if (!queryResp.ok) return;
+        const data = await queryResp.json();
+        const pages = data.results || [];
+
+        // Write each lead's Status to KV as notion:lead:{pageId}:status
+        for (const page of pages) {
+          try {
+            const pageId = page.id;
+            const statusProp = page.properties?.Status;
+            // Notion Status can be select or status type
+            const statusVal =
+              statusProp?.select?.name ||
+              statusProp?.status?.name ||
+              statusProp?.rich_text?.[0]?.plain_text ||
+              null;
+            if (!statusVal) continue;
+
+            const nameProp = page.properties?.Name || page.properties?.["Lead Name"];
+            const nameVal =
+              nameProp?.title?.[0]?.plain_text ||
+              nameProp?.rich_text?.[0]?.plain_text ||
+              "";
+
+            const emailProp = page.properties?.Email;
+            const emailVal =
+              emailProp?.email ||
+              emailProp?.rich_text?.[0]?.plain_text ||
+              "";
+
+            const record = {
+              pageId,
+              status:      statusVal,
+              name:        nameVal,
+              email:       emailVal,
+              lastEdited:  page.last_edited_time,
+              syncedAt:    new Date().toISOString(),
+            };
+
+            await env.RELAY_STATE.put(
+              `notion:lead:${pageId}:status`,
+              JSON.stringify(record),
+              { expirationTtl: 60 * 60 * 24 * 30 } // 30d retention
+            );
+          } catch { /* skip bad page */ }
+        }
+      } catch (e) {
+        console.error("[Notion Sync] failed:", e.message);
+      }
+    })());
   },
 
   async fetch(request, env, ctx) {
@@ -2560,6 +2634,39 @@ ops@primecoreintelligence.com`,
           `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Denied</title><style>body{font-family:system-ui;background:#0a1628;color:#ef4444;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px}</style></head><body><div style="font-size:48px">❌</div><h2>Denied</h2><p style="color:#7a93b8">${approval.action}</p><p style="color:#4a6080;font-size:12px">PrimeCore Intelligence · ${approval.decidedAt}</p></body></html>`,
           { status: 200, headers: { "content-type": "text/html" } }
         );
+      }
+    }
+
+    // ── GET /relay/notion/leads — Command Station polls Notion lead sync state ──────
+    if (request.method === "GET" && path === "/relay/notion/leads") {
+      const authHeader = request.headers.get("Authorization") || "";
+      const token = authHeader.replace("Bearer ", "").trim();
+      if (!env.RELAY_AUTH_TOKEN || token !== env.RELAY_AUTH_TOKEN) {
+        return json({ ok: false, error: "Unauthorized" }, 401, origin);
+      }
+      if (!env.RELAY_STATE) {
+        return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      }
+      try {
+        // List all synced Notion lead status keys
+        const keys = await env.RELAY_STATE.list({ prefix: "notion:lead:" });
+        const leads = [];
+        for (const key of (keys.keys || [])) {
+          try {
+            const raw = await env.RELAY_STATE.get(key.name);
+            if (raw) leads.push(JSON.parse(raw));
+          } catch { /* skip */ }
+        }
+        // Sort by lastEdited descending
+        leads.sort((a, b) => new Date(b.lastEdited) - new Date(a.lastEdited));
+        return json({
+          ok:        true,
+          count:     leads.length,
+          syncedAt:  new Date().toISOString(),
+          leads,
+        }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
       }
     }
 
