@@ -1138,6 +1138,132 @@ async function sendSlackAlert(env, record, notionResult, roi) {
 
 
 // ══════════════════════════════════════════════════════════════════════════
+// CALL SCORING ENGINE — Week 3-A
+// Real-time agent performance scoring on transcript chunks.
+// Rubric-based fallback (no API key needed). AI-enhanced when OPENAI_API_KEY set.
+// ══════════════════════════════════════════════════════════════════════════
+
+const SCORING_RUBRIC = {
+  greeting:    { weight: 10, keywords: ["hello", "hola", "olá", "good morning", "buenos días", "bom dia", "welcome", "bienvenido", "bem-vindo"] },
+  empathy:     { weight: 20, keywords: ["understand", "entiendo", "entendo", "i see", "of course", "claro", "claro que", "absolutely", "certainly", "ciertamente", "certamente"] },
+  qualification: { weight: 25, keywords: ["volume", "volumen", "volume", "calls", "llamadas", "chamadas", "agents", "agentes", "budget", "presupuesto", "orçamento", "timeline", "plazo", "prazo"] },
+  objection_handling: { weight: 20, keywords: ["however", "sin embargo", "no entanto", "actually", "in fact", "the benefit", "el beneficio", "o benefício", "compared to", "en comparación", "em comparação"] },
+  cta:         { weight: 25, keywords: ["pilot", "piloto", "schedule", "programar", "agendar", "demo", "next step", "próximo paso", "próximo passo", "let me set up", "déjame", "deixa eu"] },
+};
+
+// Rubric-based score (0-100) from accumulated transcript
+function rubricScore(chunks) {
+  if (!chunks || chunks.length === 0) return { score: 0, dimensions: {}, totalChunks: 0 };
+  const agentChunks = chunks.filter(c => c.speaker === "agent");
+  const allText     = agentChunks.map(c => (c.text || "").toLowerCase()).join(" ");
+  const dimensions  = {};
+  let totalWeight   = 0;
+  let earned        = 0;
+
+  for (const [dim, cfg] of Object.entries(SCORING_RUBRIC)) {
+    totalWeight += cfg.weight;
+    const hit = cfg.keywords.some(kw => allText.includes(kw));
+    dimensions[dim] = hit ? cfg.weight : 0;
+    earned += dimensions[dim];
+  }
+
+  const score = totalWeight > 0 ? Math.round((earned / totalWeight) * 100) : 0;
+  return { score, dimensions, totalChunks: chunks.length, agentChunks: agentChunks.length };
+}
+
+// AI-enhanced coaching hints (async, non-blocking — only runs when OPENAI_API_KEY present)
+async function aiCoachingHints(env, callId, chunks, scoreResult) {
+  if (!env.OPENAI_API_KEY) return null;
+  try {
+    const agentTexts = chunks
+      .filter(c => c.speaker === "agent")
+      .slice(-6) // Last 6 agent turns
+      .map(c => c.text)
+      .join("\n");
+    if (!agentTexts.trim()) return null;
+
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type":  "application/json",
+        "authorization": `Bearer ${env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        max_tokens: 120,
+        temperature: 0.3,
+        messages: [
+          {
+            role: "system",
+            content: "You are a senior operations advisor at PrimeCore Intelligence reviewing a live CCaaS sales call. Analyze the last few agent turns and give ONE concise coaching tip (max 2 sentences) to improve the call. Be direct, actionable, no fluff. Focus on: qualification, empathy, objection handling, or CTA.",
+          },
+          {
+            role: "user",
+            content: `Agent turns:\n${agentTexts}\n\nCurrent rubric score: ${scoreResult.score}/100. Weakest dimension: ${
+              Object.entries(scoreResult.dimensions).sort((a,b) => a[1] - b[1])[0]?.[0] || "unknown"
+            }. Give one coaching tip.`,
+          },
+        ],
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.choices?.[0]?.message?.content?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+// Persist call score to KV and push coaching hint to teleprompter session
+async function updateCallScore(env, callId, sessionId, tenantId, chunks, ctx) {
+  try {
+    const scoreResult = rubricScore(chunks);
+    const hint        = await aiCoachingHints(env, callId, chunks, scoreResult);
+
+    const scoreRecord = {
+      callId,
+      sessionId,
+      tenantId,
+      ...scoreResult,
+      hint:      hint || null,
+      scoredAt:  new Date().toISOString(),
+    };
+
+    // Persist to KV (24h TTL)
+    await env.RELAY_STATE.put(
+      `call:score:${tenantId}:${callId}`,
+      JSON.stringify(scoreRecord),
+      { expirationTtl: 60 * 60 * 24 }
+    );
+
+    // Push coaching hint to teleprompter if session active and hint exists
+    if (hint && sessionId && env.TELEPROMPTER_SESSION) {
+      try {
+        const doId   = env.TELEPROMPTER_SESSION.idFromName(sessionId);
+        const doStub = env.TELEPROMPTER_SESSION.get(doId);
+        await doStub.fetch(new Request("https://internal/teleprompter?action=push", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            type:       "coaching_hint",
+            score:      scoreResult.score,
+            dimensions: scoreResult.dimensions,
+            hint,
+            callId,
+            ts:         new Date().toISOString(),
+          }),
+        }));
+      } catch { /* non-fatal: teleprompter push */ }
+    }
+
+    return scoreRecord;
+  } catch (e) {
+    console.error("[Call Scoring] failed:", e.message);
+    return null;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // VOICE SYNTHESIS LAYER
 // Standard: PrimeCore Voice — $0.04/call
 // Premium:  PrimeCore Voice Pro — $0.09/call
@@ -2077,6 +2203,27 @@ export default {
       await kvPut(env.RELAY_EVENTS, tenantId, "transcript",
         `${callId}_${chunk.seq}_${Date.now()}`, chunk, { expirationTtl: 60 * 60 * 4 });
 
+      // ── Async call scoring (non-blocking) ──────────────────────────────────
+      // Only score every 3rd chunk (seq % 3 === 0) to reduce cost
+      if (env.RELAY_STATE && chunk.seq % 3 === 0) {
+        ctx.waitUntil((async () => {
+          try {
+            // Fetch last 20 transcript chunks for this call
+            const allKeys = await env.RELAY_EVENTS.list({ prefix: `tenant:${tenantId}:transcript:${callId}_` });
+            const chunks  = [];
+            for (const k of (allKeys.keys || []).slice(-20)) {
+              try {
+                const raw = await env.RELAY_EVENTS.get(k.name);
+                if (raw) chunks.push(JSON.parse(raw));
+              } catch { /* skip */ }
+            }
+            chunks.push(chunk); // include current chunk
+            const sessionId = body.sessionId || callId; // allow explicit session override
+            await updateCallScore(env, callId, sessionId, tenantId, chunks, ctx);
+          } catch { /* non-fatal scoring */ }
+        })());
+      }
+
       return json({ ok:true, callId, tenantId, seq:chunk.seq }, 201, origin);
     }
 
@@ -2634,6 +2781,47 @@ ops@primecoreintelligence.com`,
           `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Denied</title><style>body{font-family:system-ui;background:#0a1628;color:#ef4444;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px}</style></head><body><div style="font-size:48px">❌</div><h2>Denied</h2><p style="color:#7a93b8">${approval.action}</p><p style="color:#4a6080;font-size:12px">PrimeCore Intelligence · ${approval.decidedAt}</p></body></html>`,
           { status: 200, headers: { "content-type": "text/html" } }
         );
+      }
+    }
+
+    // ── GET /relay/call/score/:callId — Live call score + coaching hints ────────────
+    if (request.method === "GET" && path.startsWith("/relay/call/score/")) {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const callId = decodeURIComponent(path.split("/relay/call/score/")[1] || "");
+      if (!callId) return json({ ok: false, error: "callId required" }, 422, origin);
+      if (!env.RELAY_STATE) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      try {
+        // Try with tenant prefix, then public fallback
+        let raw = await env.RELAY_STATE.get(`call:score:${tenantId}:${callId}`);
+        if (!raw) raw = await env.RELAY_STATE.get(`call:score:public:${callId}`);
+        if (!raw) return json({ ok: false, error: "Score not found", callId }, 404, origin);
+        return json({ ok: true, ...JSON.parse(raw) }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // ── GET /relay/ccaas/scores — List active call scores for Command Station ──────
+    if (request.method === "GET" && path === "/relay/ccaas/scores") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.RELAY_STATE) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      try {
+        // List all active call scores across all tenants
+        const keys = await env.RELAY_STATE.list({ prefix: "call:score:" });
+        const scores = [];
+        for (const key of (keys.keys || [])) {
+          try {
+            const raw = await env.RELAY_STATE.get(key.name);
+            if (raw) scores.push(JSON.parse(raw));
+          } catch { /* skip */ }
+        }
+        // Sort by scoredAt descending, return max 50
+        scores.sort((a, b) => new Date(b.scoredAt) - new Date(a.scoredAt));
+        return json({ ok: true, count: scores.length, scores: scores.slice(0, 50) }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
       }
     }
 
