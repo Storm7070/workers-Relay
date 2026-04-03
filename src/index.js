@@ -2748,7 +2748,12 @@ ops@primecoreintelligence.com`,
         approval.decision  = "approved";
         approval.decidedAt = new Date().toISOString();
         await env.RELAY_STATE.put(`approval:${approvalId}`, JSON.stringify(approval),
-          { expirationTtl: 60 * 60 * 24 * 7 });
+          { expirationTtl: 60 * 60 * 24 * 30 });
+        // Push to decided history index (keeps last 100)
+        const decidedRaw = await env.RELAY_STATE.get("approvals:decided");
+        const decidedIds = decidedRaw ? JSON.parse(decidedRaw) : [];
+        decidedIds.unshift(approvalId);
+        await env.RELAY_STATE.put("approvals:decided", JSON.stringify(decidedIds.slice(0, 100)));
 
         return new Response(
           `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Approved</title><style>body{font-family:system-ui;background:#0a1628;color:#00c9a7;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px}</style></head><body><div style="font-size:48px">✅</div><h2>Approved</h2><p style="color:#7a93b8">${approval.action}</p><p style="color:#4a6080;font-size:12px">PrimeCore Intelligence · ${approval.decidedAt}</p></body></html>`,
@@ -2772,13 +2777,78 @@ ops@primecoreintelligence.com`,
         approval.decision  = "denied";
         approval.decidedAt = new Date().toISOString();
         await env.RELAY_STATE.put(`approval:${approvalId}`, JSON.stringify(approval),
-          { expirationTtl: 60 * 60 * 24 * 7 });
+          { expirationTtl: 60 * 60 * 24 * 30 });
+        // Push to decided history index (keeps last 100)
+        const decidedRaw2 = await env.RELAY_STATE.get("approvals:decided");
+        const decidedIds2 = decidedRaw2 ? JSON.parse(decidedRaw2) : [];
+        decidedIds2.unshift(approvalId);
+        await env.RELAY_STATE.put("approvals:decided", JSON.stringify(decidedIds2.slice(0, 100)));
 
         return new Response(
           `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Denied</title><style>body{font-family:system-ui;background:#0a1628;color:#ef4444;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px}</style></head><body><div style="font-size:48px">❌</div><h2>Denied</h2><p style="color:#7a93b8">${approval.action}</p><p style="color:#4a6080;font-size:12px">PrimeCore Intelligence · ${approval.decidedAt}</p></body></html>`,
           { status: 200, headers: { "content-type": "text/html" } }
         );
       }
+
+      // ── Decision history ─────────────────────────────────────────────────
+      if (request.method === "GET" && path === "/relay/approvals/history") {
+        const auth = requireAuth(request, env);
+        if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+        if (!env.RELAY_STATE) return json({ ok: false, approvals: [], count: 0 }, 200, origin);
+
+        const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 100);
+        const decidedRaw = await env.RELAY_STATE.get("approvals:decided");
+        const decidedIds = decidedRaw ? JSON.parse(decidedRaw) : [];
+
+        const items = await Promise.all(
+          decidedIds.slice(0, limit).map(async id => {
+            const raw = await env.RELAY_STATE.get(`approval:${id}`);
+            return raw ? JSON.parse(raw) : null;
+          })
+        );
+
+        const decisions = items
+          .filter(Boolean)
+          .filter(a => a.decision === "approved" || a.decision === "denied")
+          .sort((a, b) => new Date(b.decidedAt) - new Date(a.decidedAt));
+
+        return json({ ok: true, count: decisions.length, approvals: decisions }, 200, origin);
+      }
+    }
+
+    // ── GET /relay/policy/rules — Policy ruleset (auth required) ─────────────────
+    if (request.method === "GET" && path === "/relay/policy/rules") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+
+      // Canonical policy ruleset — founder-gated intents + auto-approved actions
+      const rules = {
+        version: "PE-2.1.0",
+        updatedAt: "2026-04-01T00:00:00Z",
+        spendCap: { perAction: 2500, currency: "USD", enforcedBy: "policy-engine" },
+        founderGated: [
+          { id: "PE-001", intent: "Custom Enterprise Pricing",    risk: "high",   threshold: "Any custom quote > $10k/yr" },
+          { id: "PE-002", intent: "Pilot Program Activation",     risk: "high",   threshold: "New pilot > 90 days or > 5 seats" },
+          { id: "PE-003", intent: "Contract Amendment",           risk: "high",   threshold: "Any SLA or pricing change" },
+          { id: "PE-004", intent: "Agent Spend > $2,500",         risk: "high",   threshold: "Single autonomous action" },
+          { id: "PE-005", intent: "Data Export / Bulk Transfer",  risk: "medium", threshold: "Any export > 1,000 records" },
+          { id: "PE-006", intent: "Third-Party Integration Add",  risk: "medium", threshold: "New external API connection" },
+          { id: "PE-007", intent: "Public Content Publish",       risk: "medium", threshold: "Website / social post" },
+        ],
+        autoApproved: [
+          { id: "AA-001", intent: "Lead Qualification",           risk: "low", trigger: "Score ≥ 70" },
+          { id: "AA-002", intent: "Email Follow-Up Sequence",     risk: "low", trigger: "Standard templates only" },
+          { id: "AA-003", intent: "Notion Lead Sync",             risk: "low", trigger: "Read + status write" },
+          { id: "AA-004", intent: "Slack Notification",           risk: "low", trigger: "Any system alert" },
+          { id: "AA-005", intent: "Call Transcript Scoring",      risk: "low", trigger: "Every 3rd chunk" },
+          { id: "AA-006", intent: "Competitive Intel Crawl",      risk: "low", trigger: "Nightly 00:00 EDT" },
+          { id: "AA-007", intent: "Anomaly Detection Alert",      risk: "low", trigger: "Z-score > 2.5 or abs bound" },
+          { id: "AA-008", intent: "Morning Intelligence Brief",   risk: "low", trigger: "Daily 07:00 EDT" },
+          { id: "AA-009", intent: "Health Monitor Ping",          risk: "low", trigger: "Every 10 minutes" },
+        ],
+      };
+
+      return json({ ok: true, rules }, 200, origin);
     }
 
     // ── GET /relay/audit/log — Audit trail (auth required) ───────────────────────
