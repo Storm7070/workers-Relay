@@ -3111,6 +3111,80 @@ ops@primecoreintelligence.com`,
       }
     }
 
+    // ── Phase 3: Competitive Intel proxy ────────────────────────────────────────────
+    // Proxies auth'd calls to war-room's competitive dominance endpoints
+    // Allows Command Station to use relay's RELAY_AUTH_TOKEN instead of WAR_ROOM_AUTH
+
+    // GET /relay/intel/latest
+    if (request.method === "GET" && path === "/relay/intel/latest") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.WAR_ROOM_API_TOKEN) return json({ ok: false, error: "WAR_ROOM_API_TOKEN not set" }, 503, origin);
+      const res = await fetch(`${WAR_ROOM_API}/api/intel/latest`, {
+        headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
+      });
+      return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
+    // GET /relay/intel/threat-matrix
+    if (request.method === "GET" && path === "/relay/intel/threat-matrix") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.WAR_ROOM_API_TOKEN) return json({ ok: false, error: "WAR_ROOM_API_TOKEN not set" }, 503, origin);
+      const res = await fetch(`${WAR_ROOM_API}/api/intel/threat-matrix`, {
+        headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
+      });
+      return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
+    // GET /relay/market/latest
+    if (request.method === "GET" && path === "/relay/market/latest") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.WAR_ROOM_API_TOKEN) return json({ ok: false, error: "WAR_ROOM_API_TOKEN not set" }, 503, origin);
+      const res = await fetch(`${WAR_ROOM_API}/api/market/latest`, {
+        headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
+      });
+      return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
+    // GET /relay/intel/battle-card/:slug
+    if (request.method === "GET" && path.startsWith("/relay/intel/battle-card/")) {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.WAR_ROOM_API_TOKEN) return json({ ok: false, error: "WAR_ROOM_API_TOKEN not set" }, 503, origin);
+      const slug = path.replace("/relay/intel/battle-card/", "").split("/")[0];
+      const res = await fetch(`${WAR_ROOM_API}/api/intel/battle-card/${slug}`, {
+        headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
+      });
+      return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
+    // POST /relay/intel/battle-card/:slug — generate/refresh
+    if (request.method === "POST" && path.startsWith("/relay/intel/battle-card/")) {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.WAR_ROOM_API_TOKEN) return json({ ok: false, error: "WAR_ROOM_API_TOKEN not set" }, 503, origin);
+      const slug = path.replace("/relay/intel/battle-card/", "").split("/")[0];
+      const res = await fetch(`${WAR_ROOM_API}/api/intel/battle-card/${slug}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
+      });
+      return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
+    // POST /relay/intel/run-analysis — trigger full competitive analysis
+    if (request.method === "POST" && path === "/relay/intel/run-analysis") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.WAR_ROOM_API_TOKEN) return json({ ok: false, error: "WAR_ROOM_API_TOKEN not set" }, 503, origin);
+      const res = await fetch(`${WAR_ROOM_API}/api/intel/run-analysis`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
+      });
+      return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
     return json({ ok:false, error:"Not found", path }, 404, origin);
   },
 };
