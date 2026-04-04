@@ -3185,6 +3185,30 @@ ops@primecoreintelligence.com`,
       return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
     }
 
+    // ── Phase 4: Agentic Engineer proxy ──────────────────────────────────────────
+    // GET /relay/agent/health — system health report
+    if (request.method === "GET" && path === "/relay/agent/health") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.WAR_ROOM_API_TOKEN) return json({ ok: false, error: "WAR_ROOM_API_TOKEN not set" }, 503, origin);
+      const res = await fetch(`${WAR_ROOM_API}/api/agent/health`, {
+        headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
+      });
+      return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
+    // POST /relay/agent/run — trigger full Agentic Engineer cycle
+    if (request.method === "POST" && path === "/relay/agent/run") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.WAR_ROOM_API_TOKEN) return json({ ok: false, error: "WAR_ROOM_API_TOKEN not set" }, 503, origin);
+      const res = await fetch(`${WAR_ROOM_API}/api/agent/run`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
+      });
+      return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
     return json({ ok:false, error:"Not found", path }, 404, origin);
   },
 };
