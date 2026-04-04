@@ -2963,7 +2963,6 @@ ops@primecoreintelligence.com`,
     if (request.method === "POST" && path === "/relay/founder/inject") {
       const auth = requireAuth(request, env);
       if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
-      if (!env.RELAY_STATE) return json({ ok: false, error: "KV unavailable" }, 503, origin);
       let body;
       try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400, origin); }
 
@@ -2976,17 +2975,16 @@ ops@primecoreintelligence.com`,
       const ts      = new Date().toISOString();
       const entry   = { id: msgId, message: message.trim(), target, priority, ts, source: "founder" };
 
-      // Persist in KV (90-day TTL)
-      await env.RELAY_STATE.put(`founder:msg:${msgId}`, JSON.stringify(entry), { expirationTtl: 7776000 });
+      // Persist in KV using helper (handles null KV gracefully)
+      await kvPut(env.RELAY_STATE, "founder", "msg", msgId, entry, { expirationTtl: 7776000 });
 
       // If target is a specific teleprompter session — inject into its queue
       if (target === "teleprompter" || target.startsWith("teleprompter:")) {
         const sessionId = target.includes(":") ? target.split(":")[1] : "active";
-        const queueKey  = `teleprompter:inject:${sessionId}`;
-        const existing  = await env.RELAY_STATE.get(queueKey);
-        const queue     = existing ? JSON.parse(existing) : [];
+        const existing  = await kvGet(env.RELAY_STATE, "founder", "inject", sessionId);
+        const queue     = existing ? existing : [];
         queue.push({ msgId, message: message.trim(), priority, ts });
-        await env.RELAY_STATE.put(queueKey, JSON.stringify(queue.slice(-20)), { expirationTtl: 3600 });
+        await kvPut(env.RELAY_STATE, "founder", "inject", sessionId, queue.slice(-20), { expirationTtl: 3600 });
       }
 
       // Slack echo to #pci-approvals — always record founder overrides
@@ -3023,13 +3021,12 @@ ops@primecoreintelligence.com`,
     if (request.method === "GET" && path === "/relay/founder/messages") {
       const auth = requireAuth(request, env);
       if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
-      if (!env.RELAY_STATE) return json({ ok: false, error: "KV unavailable" }, 503, origin);
       try {
-        const keys    = await env.RELAY_STATE.list({ prefix: "founder:msg:" });
+        const keys    = await kvList(env.RELAY_STATE, "founder", "msg", 50);
         const msgs    = [];
-        for (const key of (keys.keys || [])) {
+        for (const key of keys) {
           try {
-            const raw = await env.RELAY_STATE.get(key.name);
+            const raw = env.RELAY_STATE ? await env.RELAY_STATE.get(key.name) : null;
             if (raw) msgs.push(JSON.parse(raw));
           } catch { /* skip */ }
         }
@@ -3046,12 +3043,13 @@ ops@primecoreintelligence.com`,
       const auth = requireAuth(request, env);
       if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
       const sessionId = path.split("/relay/teleprompter/inject/")[1];
-      if (!sessionId || !env.RELAY_STATE) return json({ ok: false, messages: [] }, 200, origin);
+      if (!sessionId) return json({ ok: false, messages: [] }, 200, origin);
       try {
-        const raw   = await env.RELAY_STATE.get(`teleprompter:inject:${sessionId}`);
-        const queue = raw ? JSON.parse(raw) : [];
+        const queue = await kvGet(env.RELAY_STATE, "founder", "inject", sessionId) || [];
         // Clear after reading (one-shot delivery)
-        if (queue.length > 0) await env.RELAY_STATE.delete(`teleprompter:inject:${sessionId}`);
+        if (queue.length > 0 && env.RELAY_STATE) {
+          await kvPut(env.RELAY_STATE, "founder", "inject", sessionId, [], { expirationTtl: 3600 });
+        }
         return json({ ok: true, count: queue.length, messages: queue }, 200, origin);
       } catch (e) {
         return json({ ok: false, error: e.message }, 500, origin);
