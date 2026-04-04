@@ -530,7 +530,7 @@ Apenas o corpo do e-mail â€” sem assunto. Assine como: PrimeCore Intelligence â€
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 600,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
@@ -1191,7 +1191,7 @@ async function aiCoachingHints(env, callId, chunks, scoreResult) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model:      "claude-haiku-4-20250514",
+        model:      "claude-haiku-4-5-20251001",
         max_tokens: 150,
         system: "You are a senior operations advisor at PrimeCore Intelligence reviewing a live CCaaS sales call. Analyze the last few agent turns and give ONE concise coaching tip (max 2 sentences) to improve the call. Be direct, actionable, no fluff. Focus on: qualification, empathy, objection handling, or CTA.",
         messages: [
