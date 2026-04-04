@@ -1639,12 +1639,6 @@ async function handleLeadSweep(env) {
   return { ok: true, swept: results?.length || 0, ts: new Date().toISOString() };
 }
 
-// ── Sales Swarm sweep (internal cron or manual trigger) ──────────────────
-async function handleLeadSweep(env) {
-  const results = await sweepStaleLeads(env).catch(() => []);
-  return { ok: true, swept: results?.length || 0, ts: new Date().toISOString() };
-}
-
 export default {
   // ── Cron: daily follow-up sequence processor (10:00 UTC) ─────────────
   async scheduled(event, env, ctx) {
