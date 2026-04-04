@@ -2961,6 +2961,7 @@ ops@primecoreintelligence.com`,
     //   target: "teleprompter" | "factory:<id>" | "broadcast" | "slack"
     // Stores in KV, echoes to Slack #pci-approvals, returns ack.
     if (request.method === "POST" && path === "/relay/founder/inject") {
+      const auth = requireAuth(request, env);
       if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
       if (!env.RELAY_STATE) return json({ ok: false, error: "KV unavailable" }, 503, origin);
       let body;
@@ -3020,6 +3021,7 @@ ops@primecoreintelligence.com`,
 
     // ── GET /relay/founder/messages — Retrieve founder message history ────────
     if (request.method === "GET" && path === "/relay/founder/messages") {
+      const auth = requireAuth(request, env);
       if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
       if (!env.RELAY_STATE) return json({ ok: false, error: "KV unavailable" }, 503, origin);
       try {
@@ -3041,6 +3043,7 @@ ops@primecoreintelligence.com`,
     // ── GET /relay/teleprompter/inject/:sessionId — Poll inject queue ─────────
     // Called by Teleprompter every few seconds to check for founder overrides
     if (request.method === "GET" && path.startsWith("/relay/teleprompter/inject/")) {
+      const auth = requireAuth(request, env);
       if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
       const sessionId = path.split("/relay/teleprompter/inject/")[1];
       if (!sessionId || !env.RELAY_STATE) return json({ ok: false, messages: [] }, 200, origin);
