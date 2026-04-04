@@ -2955,6 +2955,106 @@ ops@primecoreintelligence.com`,
       }
     }
 
+
+    // ── POST /relay/founder/inject — Founder Override Channel ────────────────
+    // Accepts a message from the Founder and routes it to:
+    //   target: "teleprompter" | "factory:<id>" | "broadcast" | "slack"
+    // Stores in KV, echoes to Slack #pci-approvals, returns ack.
+    if (request.method === "POST" && path === "/relay/founder/inject") {
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.RELAY_STATE) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      let body;
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400, origin); }
+
+      const { message, target = "broadcast", priority = "normal" } = body;
+      if (!message || typeof message !== "string" || message.trim().length === 0) {
+        return json({ ok: false, error: "message is required" }, 422, origin);
+      }
+
+      const msgId   = `founder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const ts      = new Date().toISOString();
+      const entry   = { id: msgId, message: message.trim(), target, priority, ts, source: "founder" };
+
+      // Persist in KV (90-day TTL)
+      await env.RELAY_STATE.put(`founder:msg:${msgId}`, JSON.stringify(entry), { expirationTtl: 7776000 });
+
+      // If target is a specific teleprompter session — inject into its queue
+      if (target === "teleprompter" || target.startsWith("teleprompter:")) {
+        const sessionId = target.includes(":") ? target.split(":")[1] : "active";
+        const queueKey  = `teleprompter:inject:${sessionId}`;
+        const existing  = await env.RELAY_STATE.get(queueKey);
+        const queue     = existing ? JSON.parse(existing) : [];
+        queue.push({ msgId, message: message.trim(), priority, ts });
+        await env.RELAY_STATE.put(queueKey, JSON.stringify(queue.slice(-20)), { expirationTtl: 3600 });
+      }
+
+      // Slack echo to #pci-approvals — always record founder overrides
+      if (env.SLACK_WEBHOOK_APPROVALS) {
+        const targetLabel = target === "broadcast" ? "ALL FACTORIES" :
+                            target.startsWith("teleprompter") ? "TELEPROMPTER" :
+                            target.startsWith("factory:") ? `FACTORY: ${target.split(":")[1].toUpperCase()}` : target.toUpperCase();
+        const slackColor  = priority === "urgent" ? "#ef4444" : "#f59e0b";
+        await fetch(env.SLACK_WEBHOOK_APPROVALS, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            attachments: [{
+              color:    slackColor,
+              fallback: `[FOUNDER OVERRIDE] ${message}`,
+              blocks:   [
+                { type: "header", text: { type: "plain_text", text: "📡 FOUNDER OVERRIDE CHANNEL" } },
+                { type: "section", fields: [
+                  { type: "mrkdwn", text: `*Target:*\n${targetLabel}` },
+                  { type: "mrkdwn", text: `*Priority:*\n${priority.toUpperCase()}` },
+                ]},
+                { type: "section", text: { type: "mrkdwn", text: `*Message:*\n> ${message.trim()}` } },
+                { type: "context", elements: [{ type: "mrkdwn", text: `ID: ${msgId} · ${ts}` }] },
+              ],
+            }],
+          }),
+        }).catch(() => {});
+      }
+
+      return json({ ok: true, msgId, ts, target, priority, message: entry.message }, 201, origin);
+    }
+
+    // ── GET /relay/founder/messages — Retrieve founder message history ────────
+    if (request.method === "GET" && path === "/relay/founder/messages") {
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.RELAY_STATE) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      try {
+        const keys    = await env.RELAY_STATE.list({ prefix: "founder:msg:" });
+        const msgs    = [];
+        for (const key of (keys.keys || [])) {
+          try {
+            const raw = await env.RELAY_STATE.get(key.name);
+            if (raw) msgs.push(JSON.parse(raw));
+          } catch { /* skip */ }
+        }
+        msgs.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+        return json({ ok: true, count: msgs.length, messages: msgs.slice(0, 50) }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // ── GET /relay/teleprompter/inject/:sessionId — Poll inject queue ─────────
+    // Called by Teleprompter every few seconds to check for founder overrides
+    if (request.method === "GET" && path.startsWith("/relay/teleprompter/inject/")) {
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const sessionId = path.split("/relay/teleprompter/inject/")[1];
+      if (!sessionId || !env.RELAY_STATE) return json({ ok: false, messages: [] }, 200, origin);
+      try {
+        const raw   = await env.RELAY_STATE.get(`teleprompter:inject:${sessionId}`);
+        const queue = raw ? JSON.parse(raw) : [];
+        // Clear after reading (one-shot delivery)
+        if (queue.length > 0) await env.RELAY_STATE.delete(`teleprompter:inject:${sessionId}`);
+        return json({ ok: true, count: queue.length, messages: queue }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
     return json({ ok:false, error:"Not found", path }, 404, origin);
   },
 };
