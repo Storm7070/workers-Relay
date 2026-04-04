@@ -1800,6 +1800,25 @@ export default {
       } catch (e) {
         console.error("[Notion Sync] failed:", e.message);
       }
+
+      // Phase 5: CFO Monthly Brief — fires on the 1st of each month
+      ctx.waitUntil((async () => {
+        try {
+          const now   = new Date();
+          const isFirst = now.getUTCDate() === 1;
+          if (isFirst && env.RELAY_STATE && env.ANTHROPIC_API_KEY) {
+            // Generate brief for the month that just ended
+            const prevMonth = new Date(now.getUTCFullYear(), now.getUTCMonth() - 1, 1);
+            const period    = `${prevMonth.getUTCFullYear()}-${String(prevMonth.getUTCMonth() + 1).padStart(2, "0")}`;
+            const { generateMonthlyCFOBrief } = await import("./cfoIntelligence.js");
+            const result = await generateMonthlyCFOBrief(env, env.RELAY_STATE, period);
+            console.log("[CFO Brief]", period, result.ok ? "generated" : result.error);
+          }
+        } catch (e) {
+          console.error("[CFO Brief] failed:", e.message);
+        }
+      })());
+
     })());
   },
 
@@ -3183,6 +3202,163 @@ ops@primecoreintelligence.com`,
         headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
       });
       return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
+    // ── Phase 5: CFO Intelligence Layer ───────────────────────────────────────
+    // All /relay/cfo/* endpoints require auth. Use env.RELAY_STATE as KV.
+
+    // GET /relay/cfo/dashboard — full CFO dashboard
+    if (request.method === "GET" && path === "/relay/cfo/dashboard") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const kv = env.RELAY_STATE;
+      if (!kv) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      try {
+        const { getCFODashboard } = await import("./cfoIntelligence.js");
+        const dashboard = await getCFODashboard(kv);
+        return json(dashboard, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // POST /relay/cfo/transaction — record a revenue or expense transaction
+    if (request.method === "POST" && path === "/relay/cfo/transaction") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const kv = env.RELAY_STATE;
+      if (!kv) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      let body;
+      try { body = await request.json(); } catch {
+        return json({ ok: false, error: "Invalid JSON" }, 400, origin);
+      }
+      const { type, category, amount, description, date, source } = body;
+      if (!type || !category || !amount) {
+        return json({ ok: false, error: "type, category, and amount required" }, 422, origin);
+      }
+      if (!Number.isFinite(parseFloat(amount)) || parseFloat(amount) <= 0) {
+        return json({ ok: false, error: "amount must be a positive number" }, 422, origin);
+      }
+      try {
+        const { recordTransaction } = await import("./cfoIntelligence.js");
+        const result = await recordTransaction(kv, { type, category, amount, description, date, source });
+        return json(result, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // GET /relay/cfo/pnl/:period — P&L for a specific period (YYYY-MM)
+    if (request.method === "GET" && path.startsWith("/relay/cfo/pnl/")) {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const kv = env.RELAY_STATE;
+      if (!kv) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      const period = path.replace("/relay/cfo/pnl/", "").split("/")[0];
+      try {
+        const { computePnL } = await import("./cfoIntelligence.js");
+        const pnl = await computePnL(kv, period);
+        return json(pnl, pnl.ok ? 200 : 404, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // GET /relay/cfo/audit/:period — audit report for a period
+    if (request.method === "GET" && path.startsWith("/relay/cfo/audit/")) {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const kv = env.RELAY_STATE;
+      if (!kv) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      const period = path.replace("/relay/cfo/audit/", "").split("/")[0];
+      try {
+        const { runAudit } = await import("./cfoIntelligence.js");
+        const audit = await runAudit(kv, period);
+        return json(audit, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // GET /relay/cfo/tax — YTD tax estimate
+    if (request.method === "GET" && path === "/relay/cfo/tax") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const kv = env.RELAY_STATE;
+      if (!kv) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      try {
+        const { estimateTax } = await import("./cfoIntelligence.js");
+        const tax = await estimateTax(kv);
+        return json(tax, tax.ok ? 200 : 404, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // POST /relay/cfo/advisor — ask the AI financial advisor
+    if (request.method === "POST" && path === "/relay/cfo/advisor") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.ANTHROPIC_API_KEY) return json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, 503, origin);
+      const kv = env.RELAY_STATE;
+      if (!kv) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      try {
+        const { runFinancialAdvisor, getCFODashboard } = await import("./cfoIntelligence.js");
+        // Auto-load current context
+        const dashboard = await getCFODashboard(kv);
+        const context   = {
+          period:         dashboard.current_period,
+          revenue:        dashboard.pnl?.revenue       || 0,
+          expenses:       dashboard.pnl?.expenses      || 0,
+          net_profit:     dashboard.pnl?.net_profit    || 0,
+          profit_margin:  dashboard.pnl?.profit_margin || "0%",
+          mrr:            dashboard.pnl?.mrr            || 0,
+          ytd_revenue:    dashboard.ytd?.revenue        || 0,
+          ytd_expenses:   dashboard.ytd?.expenses       || 0,
+          audit_flags:    dashboard.audit?.flag_count   || 0,
+          additional_context: body.question || "",
+        };
+        const advice = await runFinancialAdvisor(env, kv, context);
+        if (!advice) return json({ ok: false, error: "Advisor unavailable" }, 503, origin);
+        return json({ ok: true, ...advice, context_period: context.period }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // POST /relay/cfo/brief/:period — generate monthly CFO brief
+    if (request.method === "POST" && path.startsWith("/relay/cfo/brief/")) {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      if (!env.ANTHROPIC_API_KEY) return json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, 503, origin);
+      const kv = env.RELAY_STATE;
+      if (!kv) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      const period = path.replace("/relay/cfo/brief/", "").split("/")[0];
+      try {
+        const { generateMonthlyCFOBrief } = await import("./cfoIntelligence.js");
+        const result = await generateMonthlyCFOBrief(env, kv, period);
+        return json(result, result.ok ? 200 : 500, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // GET /relay/cfo/brief/:period — retrieve a saved brief
+    if (request.method === "GET" && path.startsWith("/relay/cfo/brief/")) {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const kv = env.RELAY_STATE;
+      if (!kv) return json({ ok: false, error: "KV unavailable" }, 503, origin);
+      const period = path.replace("/relay/cfo/brief/", "").split("/")[0];
+      try {
+        const raw = await kv.get(`cfo:brief:${period}`);
+        if (!raw) return json({ ok: false, error: "No brief found for period", period }, 404, origin);
+        return json({ ok: true, ...JSON.parse(raw) }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
     }
 
     // ── Phase 4: Agentic Engineer proxy ──────────────────────────────────────────
