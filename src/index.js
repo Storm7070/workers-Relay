@@ -15,6 +15,7 @@
 
 "use strict";
 import { runLeadOrchestrator, sweepStaleLeads } from "./leadOrchestrator.js";
+import { runLeadResearch, getLeadDossier, listLeadDossiers } from "./leadResearch.js";
 
 const WAR_ROOM_API = "https://api.primecoreintelligence.com";
 const VERSION      = "3.0.0";
@@ -2381,36 +2382,26 @@ ops@primecoreintelligence.com`,
         }).catch(() => {}));
       }
 
-      // 5. Sales Swarm — trigger lead orchestrator asynchronously (Qualifier → Closer)
+      // 5a. Lead Research Engine — runs in parallel, produces dossier + ROI score
+      const leadPayload = {
+        name:     record.name,
+        email:    record.email,
+        company:  record.company,
+        phone:    record.phone || "",
+        ccaas:    record.ccaas || "",
+        volume:   record.volume || "",
+        vertical: record.vertical || "",
+        notes:    record.notes || "",
+        lang:     record.lang || "en",
+        source:   "pilot_form",
+      };
       ctx.waitUntil(
-        runLeadOrchestrator(id, {
-          name:     record.name,
-          email:    record.email,
-          company:  record.company,
-          phone:    record.phone || "",
-          ccaas:    record.ccaas || "",
-          volume:   record.volume || "",
-          vertical: record.vertical || "",
-          notes:    record.notes || "",
-          lang:     record.lang || "en",
-          source:   "pilot_form",
-        }, env).catch(() => { /* swarm failure is non-fatal */ })
+        runLeadResearch(id, leadPayload, env).catch(() => { /* non-fatal */ })
       );
 
-      // 5. Sales Swarm — trigger lead orchestrator asynchronously (Qualifier → Closer)
+      // 5b. Sales Swarm — trigger lead orchestrator asynchronously (Qualifier → Closer)
       ctx.waitUntil(
-        runLeadOrchestrator(id, {
-          name:     record.name,
-          email:    record.email,
-          company:  record.company,
-          phone:    record.phone || "",
-          ccaas:    record.ccaas || "",
-          volume:   record.volume || "",
-          vertical: record.vertical || "",
-          notes:    record.notes || "",
-          lang:     record.lang || "en",
-          source:   "pilot_form",
-        }, env).catch(() => { /* swarm failure is non-fatal */ })
+        runLeadOrchestrator(id, leadPayload, env).catch(() => { /* swarm failure is non-fatal */ })
       );
 
       return json({ ok:true, id, roi:record.roi || null, message:"Pilot request received. We will contact you within 1 business day." }, 201, origin);
@@ -3051,6 +3042,70 @@ ops@primecoreintelligence.com`,
           await kvPut(env.RELAY_STATE, "founder", "inject", sessionId, [], { expirationTtl: 3600 });
         }
         return json({ ok: true, count: queue.length, messages: queue }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+
+    // ── GET /relay/leads/dossier/:leadId — Retrieve research dossier ──────────────
+    if (request.method === "GET" && path.startsWith("/relay/leads/dossier/")) {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const leadId = path.split("/relay/leads/dossier/")[1];
+      if (!leadId) return json({ ok: false, error: "leadId required" }, 422, origin);
+      try {
+        const dossier = await getLeadDossier(leadId, env);
+        if (!dossier) return json({ ok: false, error: "Dossier not found", leadId }, 404, origin);
+        return json({ ok: true, dossier }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // ── GET /relay/leads/intelligence — List all lead dossiers for Command Station ─
+    if (request.method === "GET" && path === "/relay/leads/intelligence") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      try {
+        const limit    = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
+        const dossiers = await listLeadDossiers(env, limit);
+
+        // Compute pipeline stats
+        const stats = {
+          total:          dossiers.length,
+          priority1:      dossiers.filter(d => d.routing?.priority === 1).length,
+          priority2:      dossiers.filter(d => d.routing?.priority === 2).length,
+          founder_review: dossiers.filter(d => d.routing?.action   === "founder_review").length,
+          auto_rejected:  dossiers.filter(d => d.routing?.action   === "auto_reject").length,
+          gut_wrenching:  dossiers.filter(d => d.gutWrenchingFlags?.length > 0).length,
+          avg_score:      dossiers.length > 0
+            ? Math.round(dossiers.reduce((s, d) => s + (d.score || 0), 0) / dossiers.length)
+            : 0,
+        };
+
+        return json({ ok: true, count: dossiers.length, stats, dossiers }, 200, origin);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500, origin);
+      }
+    }
+
+    // ── POST /relay/leads/research — Manually trigger research on an existing lead ─
+    if (request.method === "POST" && path === "/relay/leads/research") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      let body;
+      try { body = await request.json(); } catch {
+        return json({ ok: false, error: "Invalid JSON" }, 400, origin);
+      }
+      const { leadId, lead } = body;
+      if (!leadId || !lead?.company) {
+        return json({ ok: false, error: "leadId and lead.company required" }, 422, origin);
+      }
+      // Run research and return result (synchronous for manual trigger)
+      try {
+        const result = await runLeadResearch(leadId, lead, env);
+        return json(result, result.ok ? 200 : 500, origin);
       } catch (e) {
         return json({ ok: false, error: e.message }, 500, origin);
       }
