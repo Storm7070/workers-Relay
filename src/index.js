@@ -16,6 +16,15 @@
 "use strict";
 import { runLeadOrchestrator, sweepStaleLeads } from "./leadOrchestrator.js";
 import { runLeadResearch, getLeadDossier, listLeadDossiers } from "./leadResearch.js";
+import {
+  CALL_MODES,
+  handleRetellInbound,
+  dispatchRetellOutbound,
+  handleRetellWebhook,
+  getLiveCalls,
+  getCallHistory,
+  retellRequest,
+} from "./retellOrchestrator.js";
 
 const WAR_ROOM_API = "https://api.primecoreintelligence.com";
 const VERSION      = "3.0.0";
@@ -31,6 +40,12 @@ const LIMITS = {
   "/relay/call/respond":        { max: 1000, window: 300  },
   "/relay/call/outbound":      { max: 200,  window: 300  },
   "/relay/teleprompter/push":  { max: 1000, window: 300  },
+  "/relay/retell/webhook":     { max: 2000, window: 300  },
+  "/relay/retell/inbound":     { max: 500,  window: 300  },
+  "/relay/retell/llm":         { max: 2000, window: 300  },
+  "/relay/retell/settings":    { max: 60,   window: 300  },
+  "/relay/retell/calls":       { max: 200,  window: 300  },
+  "/relay/retell/coaching":    { max: 1000, window: 300  },
   "default":                   { max: 60,   window: 300  },
 };
 
@@ -1262,130 +1277,110 @@ async function updateCallScore(env, callId, sessionId, tenantId, chunks, ctx) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// VOICE SYNTHESIS LAYER
-// Standard: PrimeCore Voice — $0.04/call
-// Premium:  PrimeCore Voice Pro — $0.09/call
+// ══════════════════════════════════════════════════════════════════════════
+// VOICE SYNTHESIS LAYER — Microsoft Azure Vibe Voice (free tier)
+// Primary: Azure Neural TTS (free: 500k chars/mo standard, 5M chars/mo F0)
+// Fallback: Azure Speech Services REST API
+// Stack: Retell AI (orchestration) + Vibe Voice (synthesis) + Gemini (reasoning)
 // ══════════════════════════════════════════════════════════════════════════
 
-// Voice persona definitions per language
-const VOICE_PERSONAS = {
-  cartesia: {
-    es: { voice_id: "a0e99841-438c-4a64-b679-ae501e7d6091", language: "es" }, // Spanish neutral LATAM
-    en: { voice_id: "79a125e8-cd45-4c13-8a67-188112f4dd22", language: "en" }, // English professional
-    pt: { voice_id: "c8cf1063-8195-4a0e-b7c1-c9639d0c1a8b", language: "pt" }, // Portuguese Brazilian
+// Azure Vibe Voice neural voice personas per language
+// Using multilingual neural voices that support all 3 target languages
+const VIBE_VOICE_PERSONAS = {
+  es: {
+    voice:    "es-MX-DaliaNeural",      // Natural LATAM Spanish, professional tone
+    locale:   "es-MX",
+    fallback: "es-ES-ElviraNeural",
   },
-  elevenlabs: {
-    es: { voice_id: "pNInz6obpgDQGcFmaJgB", model: "eleven_turbo_v2_5" }, // Adam — neutral, professional
-    en: { voice_id: "ErXwobaYiN019PkySvjV", model: "eleven_turbo_v2_5" }, // Antoni
-    pt: { voice_id: "pNInz6obpgDQGcFmaJgB", model: "eleven_turbo_v2_5" }, // Adam (neutral)
+  en: {
+    voice:    "en-US-JennyNeural",      // Customer service style, warm
+    locale:   "en-US",
+    fallback: "en-US-AriaNeural",
+  },
+  pt: {
+    voice:    "pt-BR-FranciscaNeural",  // Brazilian Portuguese, natural
+    locale:   "pt-BR",
+    fallback: "pt-BR-AntonioNeural",
+  },
+  fr: {
+    voice:    "fr-FR-DeniseNeural",
+    locale:   "fr-FR",
+    fallback: "fr-FR-HenriNeural",
+  },
+  de: {
+    voice:    "de-DE-KatjaNeural",
+    locale:   "de-DE",
+    fallback: "de-DE-ConradNeural",
   },
 };
 
-// Cartesia voice synthesis — standard tier ($0.04/call)
-async function synthesizeCartesia(env, text, lang = "es") {
-  if (!env.CARTESIA_API_KEY) return null;
-  const persona = VOICE_PERSONAS.cartesia[lang] || VOICE_PERSONAS.cartesia.es;
+// Azure Neural TTS via REST API (free F0 tier: 5M chars/month)
+async function synthesizeVibeVoice(env, text, lang = "es", voiceOverride = null) {
+  const azureKey    = env.AZURE_SPEECH_KEY;
+  const azureRegion = env.AZURE_SPEECH_REGION || "eastus";
 
-  try {
-    const resp = await fetch("https://api.cartesia.ai/tts/bytes", {
-      method: "POST",
-      headers: {
-        "X-API-Key": env.CARTESIA_API_KEY,
-        "Cartesia-Version": "2024-06-10",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model_id: "sonic-multilingual",
-        transcript: text,
-        voice: {
-          mode: "id",
-          id: persona.voice_id,
-        },
-        output_format: {
-          container: "raw",
-          encoding: "pcm_mulaw",
-          sample_rate: 8000, // telephony standard
-        },
-        language: persona.language,
-      }),
-    });
+  // If no Azure key configured, return null (handled by fallback chain)
+  if (!azureKey) return null;
 
-    if (!resp.ok) {
-      console.error("Cartesia synthesis failed:", resp.status);
-      return null;
-    }
+  const persona = VIBE_VOICE_PERSONAS[lang] || VIBE_VOICE_PERSONAS.es;
+  const voiceName = voiceOverride || persona.voice;
+  const locale    = persona.locale;
 
-    const audioBuffer = await resp.arrayBuffer();
-    return {
-      provider: "cartesia",
-      audio: audioBuffer,
-      format: "audio/mulaw",
-      sampleRate: 8000,
-      tier: "standard",
-    };
-  } catch (err) {
-    console.error("Cartesia error:", err.message);
-    return null;
-  }
-}
-
-// ElevenLabs voice synthesis — premium tier ($0.09/call)
-async function synthesizeElevenLabs(env, text, lang = "es") {
-  if (!env.ELEVENLABS_API_KEY) return null;
-  const persona = VOICE_PERSONAS.elevenlabs[lang] || VOICE_PERSONAS.elevenlabs.es;
+  // Build SSML — optimized for telephony (short, natural pacing)
+  const ssml = `<speak version='1.0' xml:lang='${locale}'>
+  <voice xml:lang='${locale}' name='${voiceName}'>
+    <prosody rate='0.95' pitch='0%'>${text.replace(/[<>&"]/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;' }[c]))}</prosody>
+  </voice>
+</speak>`;
 
   try {
     const resp = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${persona.voice_id}/stream`,
+      `https://${azureRegion}.tts.speech.microsoft.com/cognitiveservices/v1`,
       {
         method: "POST",
         headers: {
-          "xi-api-key": env.ELEVENLABS_API_KEY,
-          "Content-Type": "application/json",
-          "Accept": "audio/mpeg",
+          "Ocp-Apim-Subscription-Key": azureKey,
+          "Content-Type":              "application/ssml+xml",
+          "X-Microsoft-OutputFormat":  "riff-8khz-8bit-mono-mulaw", // telephony
+          "User-Agent":                "PrimeCoreIntelligence/1.0",
         },
-        body: JSON.stringify({
-          text,
-          model_id: persona.model,
-          voice_settings: {
-            stability: 0.45,        // slightly variable = more natural
-            similarity_boost: 0.80,
-            style: 0.20,            // subtle expressiveness
-            use_speaker_boost: true,
-          },
-          output_format: "ulaw_8000", // telephony standard
-        }),
+        body: ssml,
       }
     );
 
     if (!resp.ok) {
-      console.error("ElevenLabs synthesis failed:", resp.status);
+      console.error("Vibe Voice synthesis failed:", resp.status, await resp.text().catch(() => ""));
+      // Try fallback voice
+      if (voiceOverride || voiceName === persona.voice) {
+        return synthesizeVibeVoice(env, text, lang, persona.fallback);
+      }
       return null;
     }
 
     const audioBuffer = await resp.arrayBuffer();
     return {
-      provider: "elevenlabs",
-      audio: audioBuffer,
-      format: "audio/mulaw",
+      provider:   "vibe_voice",
+      audio:      audioBuffer,
+      format:     "audio/mulaw",
       sampleRate: 8000,
-      tier: "premium",
+      voice:      voiceName,
+      lang,
     };
   } catch (err) {
-    console.error("ElevenLabs error:", err.message);
+    console.error("Vibe Voice error:", err.message);
     return null;
   }
 }
 
-// Main voice router — picks provider based on tenant voice_tier
+// Main voice router — Microsoft Vibe Voice primary, text fallback
 async function synthesizeVoice(env, text, lang = "es", voiceTier = "standard") {
-  if (voiceTier === "premium" && env.ELEVENLABS_API_KEY) {
-    const result = await synthesizeElevenLabs(env, text, lang);
-    if (result) return result;
-    // Fallback to Cartesia if ElevenLabs fails
-    console.error("ElevenLabs failed — falling back to Cartesia");
-  }
-  return synthesizeCartesia(env, text, lang);
+  // voiceTier "clone" → use founder voice override ID from env
+  const voiceOverride = (voiceTier === "clone" && env.FOUNDER_VOICE_ID) ? env.FOUNDER_VOICE_ID : null;
+  const result = await synthesizeVibeVoice(env, text, lang, voiceOverride);
+  if (result) return result;
+  // If Azure not configured, return text-only fallback for Retell direct text mode
+  console.warn("Vibe Voice unavailable — returning text-only for Retell");
+  return { provider: "text_only", text, lang };
 }
 
 // Generate Mode 1 AI response for a call intent
@@ -3383,6 +3378,125 @@ ops@primecoreintelligence.com`,
         headers: { authorization: `Bearer ${env.WAR_ROOM_API_TOKEN}` },
       });
       return new Response(await res.text(), { status: res.status, headers: corsHeaders(origin) });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // RETELL AI ORCHESTRATION ROUTES — Phase 6 Agentic Answering
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // POST /relay/retell/inbound — Retell AI inbound call webhook response
+    // Returns agent_id + dynamic vars for the incoming call
+    if (request.method === "POST" && path === "/relay/retell/inbound") {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const result = await handleRetellInbound(env, env.RELAY_STATE, tenantId, body);
+      return json(result, 200, origin);
+    }
+
+    // POST /relay/retell/webhook — Retell AI event webhooks
+    // Events: call_started, call_ended, call_analyzed, transcript_updated, transfer_*
+    if (request.method === "POST" && path === "/relay/retell/webhook") {
+      let body = {};
+      try { body = await request.json(); } catch {
+        return json({ ok: false, error: "Invalid JSON" }, 400, origin);
+      }
+      const result = await handleRetellWebhook(env, env.RELAY_STATE, tenantId, body, ctx);
+      return json(result, 200, origin);
+    }
+
+    // GET /relay/retell/calls — Live + recent call list for Command Station
+    if (request.method === "GET" && path === "/relay/retell/calls") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const live    = await getLiveCalls(env, env.RELAY_STATE, tenantId);
+      const history = await getCallHistory(env, env.RELAY_STATE, tenantId, 20);
+      return json({ ok: true, live, history, ts: new Date().toISOString() }, 200, origin);
+    }
+
+    // GET /relay/retell/coaching/:callId — Teleprompter coaching for active call
+    if (request.method === "GET" && path.startsWith("/relay/retell/coaching/")) {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const callId = sanitize(path.replace("/relay/retell/coaching/", ""), 100);
+      const coaching = env.RELAY_STATE
+        ? JSON.parse(await env.RELAY_STATE.get(`${tenantId}:retell_coaching:${callId}`) || "null")
+        : null;
+      return json({ ok: true, callId, coaching }, 200, origin);
+    }
+
+    // GET /relay/retell/settings — Get current call mode settings
+    // PUT /relay/retell/settings — Update call mode
+    if (path === "/relay/retell/settings") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+
+      if (request.method === "GET") {
+        const settings = env.RELAY_STATE
+          ? JSON.parse(await env.RELAY_STATE.get(`${tenantId}:retell_settings:mode`) || "null")
+          : null;
+        return json({
+          ok: true,
+          settings: settings || {
+            mode: CALL_MODES.WARM_HANDOFF,
+            default_lang: "es",
+            modes: [
+              { id: 1, label: "Autonomous",    icon: "🤖", desc: "AI handles end-to-end — no founder needed" },
+              { id: 2, label: "Teleprompter",  icon: "🎤", desc: "Founder on call, AI whispers suggestions" },
+              { id: 3, label: "Warm Handoff",  icon: "🤝", desc: "AI starts, escalates to founder" },
+              { id: 4, label: "Outbound",      icon: "📤", desc: "Scheduled outbound campaigns" },
+            ],
+          },
+        }, 200, origin);
+      }
+
+      if (request.method === "PUT") {
+        let body = {};
+        try { body = await request.json(); } catch {
+          return json({ ok: false, error: "Invalid JSON" }, 400, origin);
+        }
+        const validModes = [1, 2, 3, 4];
+        const mode = Number(body.mode);
+        if (!validModes.includes(mode)) {
+          return json({ ok: false, error: `Invalid mode. Must be 1–4: ${validModes.join(", ")}` }, 422, origin);
+        }
+        const settings = {
+          mode,
+          default_lang: sanitize(body.default_lang || "es", 5),
+          updated_at:   new Date().toISOString(),
+        };
+        if (env.RELAY_STATE) {
+          await env.RELAY_STATE.put(`${tenantId}:retell_settings:mode`, JSON.stringify(settings));
+        }
+        ctx.waitUntil(auditLog(env.RELAY_STATE, tenantId, {
+          type: "retell_mode_changed", mode, lang: settings.default_lang, ip,
+        }));
+        return json({ ok: true, settings }, 200, origin);
+      }
+    }
+
+    // POST /relay/retell/outbound — Dispatch Retell outbound call
+    // (complements existing /relay/call/outbound with Retell fulfillment)
+    if (request.method === "POST" && path === "/relay/retell/outbound") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      let body = {};
+      try { body = await request.json(); } catch {
+        return json({ ok: false, error: "Invalid JSON" }, 400, origin);
+      }
+      if (!body.to?.trim()) return json({ ok: false, error: "to (E.164 phone) required" }, 422, origin);
+      if (!body.callType?.trim()) return json({ ok: false, error: "callType required" }, 422, origin);
+      const callRecord = {
+        id:          `rout_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
+        to:          sanitize(body.to),
+        callType:    sanitize(body.callType),
+        language:    sanitize(body.language || "es", 5),
+        contactName: sanitize(body.contactName || ""),
+        company:     sanitize(body.company    || ""),
+        notes:       sanitize(body.notes      || "", 500),
+      };
+      const result = await dispatchRetellOutbound(env, env.RELAY_STATE, tenantId, callRecord);
+      if (!result.ok) return json({ ok: false, error: result.error || "Retell dispatch failed", detail: result.data }, 502, origin);
+      return json({ ok: true, callId: callRecord.id, retellCallId: result.data?.call_id }, 201, origin);
     }
 
     return json({ ok:false, error:"Not found", path }, 404, origin);

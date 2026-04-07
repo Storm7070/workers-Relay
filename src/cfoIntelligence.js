@@ -272,7 +272,7 @@ export async function estimateTax(kv) {
 
   // Quarterly estimated tax (IRS Form 1040-ES schedule)
   const quarterlyFederal  = federalEstimate / 4;
-  const deadlines: Record<string, string> = {
+  const deadlines = {
     Q1: `${year}-04-15`,
     Q2: `${year}-06-15`,
     Q3: `${year}-09-15`,
@@ -424,7 +424,7 @@ export async function generateMonthlyCFOBrief(env, kv, period) {
       slackMsg += `*CFO Assessment:* ${advice.financial_position}\n\n`;
     }
     if (advice?.action_items?.length) {
-      slackMsg += `*Top Action Items:*\n${advice.action_items.slice(0, 3).map((a: any) => `• ${a.action} (${a.impact})`).join("\n")}\n\n`;
+      slackMsg += `*Top Action Items:*\n${advice.action_items.slice(0, 3).map((a) => `• ${a.action} (${a.impact})`).join("\n")}\n\n`;
     }
     if (gutOpp) {
       slackMsg += `🚨 *GUT-WRENCHING OPPORTUNITY:* ${gutOpp}\n\n`;
