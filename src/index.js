@@ -1277,110 +1277,73 @@ async function updateCallScore(env, callId, sessionId, tenantId, chunks, ctx) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// ══════════════════════════════════════════════════════════════════════════
-// VOICE SYNTHESIS LAYER — Microsoft Azure Vibe Voice (free tier)
-// Primary: Azure Neural TTS (free: 500k chars/mo standard, 5M chars/mo F0)
-// Fallback: Azure Speech Services REST API
-// Stack: Retell AI (orchestration) + Vibe Voice (synthesis) + Gemini (reasoning)
+// VOICE SYNTHESIS LAYER — Cartesia (main CCaaS product)
+// Standard: PrimeCore Voice — $0.04/call  (Cartesia sonic-multilingual)
+// Premium:  PrimeCore Voice Pro — $0.09/call
+// Note: Vibe Voice (Azure) is used ONLY inside Retell AI agent config
+//       (configured in Retell dashboard, not here). Do not replace Cartesia.
 // ══════════════════════════════════════════════════════════════════════════
 
-// Azure Vibe Voice neural voice personas per language
-// Using multilingual neural voices that support all 3 target languages
-const VIBE_VOICE_PERSONAS = {
-  es: {
-    voice:    "es-MX-DaliaNeural",      // Natural LATAM Spanish, professional tone
-    locale:   "es-MX",
-    fallback: "es-ES-ElviraNeural",
-  },
-  en: {
-    voice:    "en-US-JennyNeural",      // Customer service style, warm
-    locale:   "en-US",
-    fallback: "en-US-AriaNeural",
-  },
-  pt: {
-    voice:    "pt-BR-FranciscaNeural",  // Brazilian Portuguese, natural
-    locale:   "pt-BR",
-    fallback: "pt-BR-AntonioNeural",
-  },
-  fr: {
-    voice:    "fr-FR-DeniseNeural",
-    locale:   "fr-FR",
-    fallback: "fr-FR-HenriNeural",
-  },
-  de: {
-    voice:    "de-DE-KatjaNeural",
-    locale:   "de-DE",
-    fallback: "de-DE-ConradNeural",
+// Voice persona definitions per language
+const VOICE_PERSONAS = {
+  cartesia: {
+    es: { voice_id: "a0e99841-438c-4a64-b679-ae501e7d6091", language: "es" }, // Spanish neutral LATAM
+    en: { voice_id: "79a125e8-cd45-4c13-8a67-188112f4dd22", language: "en" }, // English professional
+    pt: { voice_id: "c8cf1063-8195-4a0e-b7c1-c9639d0c1a8b", language: "pt" }, // Portuguese Brazilian
   },
 };
 
-// Azure Neural TTS via REST API (free F0 tier: 5M chars/month)
-async function synthesizeVibeVoice(env, text, lang = "es", voiceOverride = null) {
-  const azureKey    = env.AZURE_SPEECH_KEY;
-  const azureRegion = env.AZURE_SPEECH_REGION || "eastus";
-
-  // If no Azure key configured, return null (handled by fallback chain)
-  if (!azureKey) return null;
-
-  const persona = VIBE_VOICE_PERSONAS[lang] || VIBE_VOICE_PERSONAS.es;
-  const voiceName = voiceOverride || persona.voice;
-  const locale    = persona.locale;
-
-  // Build SSML — optimized for telephony (short, natural pacing)
-  const ssml = `<speak version='1.0' xml:lang='${locale}'>
-  <voice xml:lang='${locale}' name='${voiceName}'>
-    <prosody rate='0.95' pitch='0%'>${text.replace(/[<>&"]/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;' }[c]))}</prosody>
-  </voice>
-</speak>`;
+// Cartesia voice synthesis — standard tier ($0.04/call)
+async function synthesizeCartesia(env, text, lang = "es") {
+  if (!env.CARTESIA_API_KEY) return null;
+  const persona = VOICE_PERSONAS.cartesia[lang] || VOICE_PERSONAS.cartesia.es;
 
   try {
-    const resp = await fetch(
-      `https://${azureRegion}.tts.speech.microsoft.com/cognitiveservices/v1`,
-      {
-        method: "POST",
-        headers: {
-          "Ocp-Apim-Subscription-Key": azureKey,
-          "Content-Type":              "application/ssml+xml",
-          "X-Microsoft-OutputFormat":  "riff-8khz-8bit-mono-mulaw", // telephony
-          "User-Agent":                "PrimeCoreIntelligence/1.0",
+    const resp = await fetch("https://api.cartesia.ai/tts/bytes", {
+      method: "POST",
+      headers: {
+        "X-API-Key": env.CARTESIA_API_KEY,
+        "Cartesia-Version": "2024-06-10",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model_id: "sonic-multilingual",
+        transcript: text,
+        voice: {
+          mode: "id",
+          id: persona.voice_id,
         },
-        body: ssml,
-      }
-    );
+        output_format: {
+          container: "raw",
+          encoding: "pcm_mulaw",
+          sample_rate: 8000,
+        },
+        language: persona.language,
+      }),
+    });
 
     if (!resp.ok) {
-      console.error("Vibe Voice synthesis failed:", resp.status, await resp.text().catch(() => ""));
-      // Try fallback voice
-      if (voiceOverride || voiceName === persona.voice) {
-        return synthesizeVibeVoice(env, text, lang, persona.fallback);
-      }
+      console.error("Cartesia synthesis failed:", resp.status);
       return null;
     }
 
     const audioBuffer = await resp.arrayBuffer();
     return {
-      provider:   "vibe_voice",
+      provider:   "cartesia",
       audio:      audioBuffer,
       format:     "audio/mulaw",
       sampleRate: 8000,
-      voice:      voiceName,
-      lang,
+      tier:       "standard",
     };
   } catch (err) {
-    console.error("Vibe Voice error:", err.message);
+    console.error("Cartesia error:", err.message);
     return null;
   }
 }
 
-// Main voice router — Microsoft Vibe Voice primary, text fallback
+// Main voice router — Cartesia primary (key already set in CF secrets)
 async function synthesizeVoice(env, text, lang = "es", voiceTier = "standard") {
-  // voiceTier "clone" → use founder voice override ID from env
-  const voiceOverride = (voiceTier === "clone" && env.FOUNDER_VOICE_ID) ? env.FOUNDER_VOICE_ID : null;
-  const result = await synthesizeVibeVoice(env, text, lang, voiceOverride);
-  if (result) return result;
-  // If Azure not configured, return text-only fallback for Retell direct text mode
-  console.warn("Vibe Voice unavailable — returning text-only for Retell");
-  return { provider: "text_only", text, lang };
+  return synthesizeCartesia(env, text, lang);
 }
 
 // Generate Mode 1 AI response for a call intent
