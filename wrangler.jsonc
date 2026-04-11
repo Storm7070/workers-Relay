@@ -5,11 +5,22 @@
   "compatibility_date": "2026-01-19",
   "observability": { "enabled": true },
 
-  // ── KV Namespaces — managed via dashboard (token lacks kv:write) ─────
-  // KV bindings — set in CF Dashboard → Workers → primecore-relay → Settings → Variables
-  // RELAY_STATE  → namespace ID: 1d3899dba6744eeaae48e2ecba7f261e
-  // RELAY_EVENTS → namespace ID: 1d3899dba6744eeaae48e2ecba7f261e
-  // "kv_namespaces": [ ... ],
+  // ── KV Namespaces ─────────────────────────────────────────────────────
+  // Both bindings point to same namespace (single-namespace Option A).
+  // Split into separate namespaces via CF Dashboard when volume warrants it.
+  // Namespace ID: 1d3899dba6744eeaae48e2ecba7f261e
+  "kv_namespaces": [
+    {
+      "binding": "RELAY_STATE",
+      "id": "1d3899dba6744eeaae48e2ecba7f261e",
+      "preview_id": "1d3899dba6744eeaae48e2ecba7f261e"
+    },
+    {
+      "binding": "RELAY_EVENTS",
+      "id": "1d3899dba6744eeaae48e2ecba7f261e",
+      "preview_id": "1d3899dba6744eeaae48e2ecba7f261e"
+    }
+  ],
 
   // ── Custom Domain — managed via dashboard ────────────────────────────
   // relay.primecoreintelligence.com set as custom domain in CF dashboard

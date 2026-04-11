@@ -16,6 +16,8 @@
 "use strict";
 import { runLeadOrchestrator, sweepStaleLeads } from "./leadOrchestrator.js";
 import { runLeadResearch, getLeadDossier, listLeadDossiers } from "./leadResearch.js";
+import { onSessionStart, onSessionEnd } from "./memory/session-hooks.js";
+import { handleHermesWebhook, handleApprovalRequest, listPendingApprovals } from "./memory/approval-bridge.js";
 import {
   CALL_MODES,
   handleRetellInbound,
@@ -3364,6 +3366,42 @@ ops@primecoreintelligence.com`,
         return json({ ok: false, error: "Invalid JSON" }, 400, origin);
       }
       const result = await handleRetellWebhook(env, env.RELAY_STATE, tenantId, body, ctx);
+
+      // ── Hermes memory hooks (v0.8.0 session lifecycle) ─────────────────
+      const eventType = String(body?.event || body?.event_type || "");
+      if (eventType.includes("call_started") || eventType === "call.started") {
+        ctx.waitUntil(onSessionStart({
+          callId:          String(body?.call_id || body?.callId || ""),
+          language:        String(body?.language || body?.lang || "en"),
+          customerSegment: String(body?.customer_segment || "unknown"),
+          callType:        String(body?.call_type || "inbound"),
+          agentId:         String(body?.agent_id || ""),
+        }).catch(e => console.warn("[hermes] onSessionStart:", e.message)));
+      }
+
+      if (eventType.includes("call_ended") || eventType === "call.ended"
+          || eventType === "call_analyzed") {
+        ctx.waitUntil(onSessionEnd(
+          {
+            callId:          String(body?.call_id || body?.callId || ""),
+            language:        String(body?.language || "en"),
+            customerSegment: String(body?.customer_segment || "unknown"),
+            callType:        String(body?.call_type || "inbound"),
+            agentId:         String(body?.agent_id || ""),
+          },
+          {
+            resolution:      String(body?.call_analysis?.call_successful === true ? "resolved" : "unknown"),
+            objections:      body?.call_analysis?.custom_analysis_data?.objections || [],
+            routingDecisions:body?.routing_decisions || [],
+            metrics: {
+              fcr:   body?.call_analysis?.custom_analysis_data?.fcr || null,
+              csat:  body?.call_analysis?.user_sentiment === "Positive" ? 1 : body?.call_analysis?.user_sentiment === "Negative" ? 0 : 0.5,
+              aht:   body?.duration_ms ? Math.round(body.duration_ms / 1000) : null,
+            },
+          }
+        ).catch(e => console.warn("[hermes] onSessionEnd:", e.message)));
+      }
+
       return json(result, 200, origin);
     }
 
@@ -3460,6 +3498,24 @@ ops@primecoreintelligence.com`,
       const result = await dispatchRetellOutbound(env, env.RELAY_STATE, tenantId, callRecord);
       if (!result.ok) return json({ ok: false, error: result.error || "Retell dispatch failed", detail: result.data }, 502, origin);
       return json({ ok: true, callId: callRecord.id, retellCallId: result.data?.call_id }, 201, origin);
+    }
+
+    // ── POST /relay/hermes/webhook ────────────────────────────────────────
+    if (request.method === "POST" && path === "/relay/hermes/webhook") {
+      return handleHermesWebhook(request, env);
+    }
+
+    // ── POST /relay/hermes/approve ────────────────────────────────────────
+    if (request.method === "POST" && path === "/relay/hermes/approve") {
+      return handleApprovalRequest(request, env);
+    }
+
+    // ── GET /relay/hermes/pending ─────────────────────────────────────────
+    if (request.method === "GET" && path === "/relay/hermes/pending") {
+      const auth = requireAuth(request, env);
+      if (!auth.ok) return json({ ok: false, error: auth.msg }, auth.code, origin);
+      const pending = await listPendingApprovals(env);
+      return json({ ok: true, count: pending.length, pending }, 200, origin);
     }
 
     return json({ ok:false, error:"Not found", path }, 404, origin);
